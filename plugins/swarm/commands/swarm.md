@@ -1,11 +1,23 @@
 ---
 description: "Manager-orchestrated multi-agent swarm — auto-routes simple tasks to 2-agent loop, complex tasks to full pipeline"
-argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--parallel]"
+argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequential]"
 ---
 
 # /swarm — Multi-Agent Orchestration
 
 > **allowed-tools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Agent`, `TaskCreate`, `TaskUpdate`, `TaskList`, `Skill`, `AskUserQuestion`
+
+<!-- Phase Flow (V2):
+  Phase 0: Init (mux detect, stale cleanup, registry, session)
+  Phase 1: Context detection + complexity classification
+  Phase 2: Plan decomposition + WAVE GROUPING (dependency graph, cycle detection)
+  Phase 3: Wave dispatch (parallel within wave, sequential across waves)
+           └─ Between waves: REGRESSION CHECK (JUnit XML identity comparison)
+  Phase 4: Review (holistic + optional Codex audit)
+  Phase 5: VERIFICATION ROUTING (flaky pre-filter → passed/gaps_found/human_needed)
+           └─ Gap closure: snapshot → fix tasks → regression check → re-verify (max 1 round)
+  Phase 6: Done (report, cleanup, next steps)
+-->
 
 ## Purpose
 
@@ -434,5 +446,11 @@ swarm_log "success" "Swarm complete — ${TASKS_DONE} tasks executed"
 | Agent crash (pane dies) | Detect via `swarm_check_agent_alive`, report to user |
 | `.result` malformed | Ask agent to rewrite (1 retry) |
 | All external agents fail | Fall back to Claude subagents only |
-| Tests fail after 2 fix rounds | Escalate to user with diagnosis |
+| Cycle detected in wave grouping | Halt, present cycle to user for resolution |
+| Regression detected between waves | Create fix task, dispatch, re-check (max 1 fix per wave) |
+| Regression gate baseline unavailable | Continue without between-wave checks, warn in report |
+| Flaky tests detected | Exclude from gap analysis, flag in report, route to `human_needed` |
+| Infrastructure test failure | Route to `human_needed` (not auto-fix) |
+| Gap closure introduces regression | Include in escalation diagnosis |
+| Tests fail after gap closure | Escalate to user with full diagnosis |
 | Stale session found on init | Offer cleanup |
