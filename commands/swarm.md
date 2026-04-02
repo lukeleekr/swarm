@@ -112,12 +112,16 @@ For each logical work unit in the plan:
    - Project: [pwd]
    - Branch: [current git branch]
    - Session: [session_id]
+   - Wave: [assigned after grouping]
+
+   ## Depends On
+   - [task-NNN that must complete before this one, or empty]
+
+   ## Files to Touch
+   - [list of files this task will read or write]
 
    ## Assignment
    [detailed description of what to implement]
-
-   ## Files to Touch
-   - [list of files]
 
    ## Acceptance Criteria
    - [what "done" means]
@@ -131,11 +135,25 @@ For each logical work unit in the plan:
    - Issues: [any problems encountered]
    ```
 
-2. Classify dependencies: which tasks can run in parallel vs. sequentially.
+2. After writing ALL task files, run wave grouping:
+   ```bash
+   WAVE_RESULT=$(swarm_group_waves "${SESSION_DIR}")
+   WAVE_EXIT=$?
+   ```
 
-3. Update ledger: `tasks_total: N`
+3. Handle wave grouping result:
+   - **Exit 0 (success)**: Parse wave assignments, write wave number into each task's `## Context` section, update ledger `wave_count`.
+   - **Exit 2 (cycle detected)**: Present the cycle to the user. Ask them to resolve the circular dependency by rewriting task boundaries. Do NOT proceed to Phase 3.
 
-If `--dry-run`: present the task list and team composition, then stop.
+4. If `--sequential` flag: override all wave assignments to sequential (wave N = task N).
+
+5. Update ledger:
+   ```bash
+   swarm_update_ledger_field "${SESSION_DIR}" "tasks_total" "N"
+   swarm_update_ledger_field "${SESSION_DIR}" "wave_count" "W"
+   ```
+
+If `--dry-run`: present the task list with wave assignments and team composition, then stop.
 
 ```bash
 swarm_set_progress "Planning" "0.15"
