@@ -161,7 +161,21 @@ swarm_set_progress "Planning" "0.15"
 
 ## Phase 3: Execute
 
-### 3.1 Spawn Agent(s)
+### 3.1 Regression Baseline (lazy)
+
+Only capture baseline when `wave_count > 1`:
+```bash
+if (( WAVE_COUNT > 1 )); then
+  GATE_STATUS=$(swarm_capture_test_baseline "${SESSION_DIR}")
+  swarm_update_ledger_field "${SESSION_DIR}" "regression_gate" "${GATE_STATUS}"
+  if [[ "${GATE_STATUS}" == "unavailable" ]]; then
+    # Warn user but continue — regression gate degrades gracefully
+    echo "Warning: Test baseline capture failed. Regression gate disabled for this session."
+  fi
+fi
+```
+
+### 3.2 Spawn Agent(s)
 
 Read the agent registry (`~/.claude/local-plugins/plugins/swarm/agents.yaml`).
 Each agent has two command modes:
@@ -170,72 +184,60 @@ Each agent has two command modes:
 
 **Pane mode (tmux/cmux):** Spawn interactive agent, send tasks via terminal:
 ```bash
-# Use command_interactive from registry (e.g., "codex" not "codex exec")
 CODEX_PANE=$(swarm_spawn_agent "Codex" "codex" "$(pwd)" "${SESSION_DIR}")
 swarm_register_agent "${SESSION_DIR}" "Codex" "${CODEX_PANE}" "coder"
 ```
 
-**Headless mode (none):** Don't pre-spawn. Run `command_exec` per task (see 3.2).
+**Headless mode (none):** Don't pre-spawn. Run `command_exec` per task (see 3.3).
 
 ```bash
 swarm_set_progress "Executing" "0.25"
 ```
 
-### 3.2 Task Dispatch Loop
+### 3.3 Wave Dispatch Loop
 
-For each task (respecting dependency order):
+Group tasks by wave number. Execute waves sequentially; within each wave, dispatch tasks in parallel.
 
-**Before each retry:** clear stale results:
-```bash
-swarm_clear_result "${SESSION_DIR}/tasks/task-NNN.md"
+```
+For each wave W (1, 2, ... WAVE_COUNT):
+
+  1. Collect all tasks assigned to wave W
+
+  2. For each task in wave W, dispatch simultaneously:
+
+     Before dispatch: clear stale results:
+     swarm_clear_result "${SESSION_DIR}/tasks/task-NNN.md"
+
+     Pane mode (tmux/cmux) — pipe to interactive agent:
+     swarm_pipe_prompt "${CODEX_PANE}" "Read and implement the task at ${SESSION_DIR}/tasks/task-NNN.md — write result to task-NNN.result with a 'Status: DONE' or 'Status: FAILED' line."
+
+     Headless mode (none) — one-shot exec per task:
+     codex exec "$(cat ${SESSION_DIR}/tasks/task-NNN.md). Write your result summary to ${SESSION_DIR}/tasks/task-NNN.result. Start with 'Status: DONE' or 'Status: FAILED', then Files Changed and Summary sections."
+
+  3. Poll all results in wave W concurrently:
+     swarm_poll_result "${SESSION_DIR}/tasks/task-NNN.md" 300
+
+  4. Evaluate results for wave W:
+     - Status: DONE → accept
+     - Status: FAILED → swarm_clear_result, retry with clarified prompt (max 2 retries per task)
+     - Timeout → escalate to user
+
+  5. Update progress:
+     swarm_update_ledger_field "${SESSION_DIR}" "tasks_done" "N"
+     swarm_set_progress "Wave W — Task N/Total" "0.${progress}"
+
+  6. Between-wave regression check (if wave_count > 1 AND regression_gate == "baseline"):
+     REGRESSED=$(swarm_check_regression "${SESSION_DIR}" "${W}")
+     if [[ $? -eq 1 ]]; then
+       # Regression detected — create targeted fix task
+       echo "Regression detected after wave ${W}: ${REGRESSED}"
+       # Correlate with files changed: git diff --stat
+       # Create fix task → dispatch to agent → re-check
+       # Max 1 regression-fix attempt per wave. If still regressed → escalate.
+     fi
 ```
 
-1. **Dispatch task to agent:**
-
-   **Pane mode (tmux/cmux)** — pipe to interactive agent:
-   ```bash
-   swarm_pipe_prompt "${CODEX_PANE}" "Read and implement the task at ${SESSION_DIR}/tasks/task-NNN.md — write result to task-NNN.result with a 'Status: DONE' or 'Status: FAILED' line."
-   ```
-
-   **Headless mode (none)** — one-shot exec per task:
-   ```bash
-   # Read command_exec from registry (e.g., "codex exec")
-   codex exec "$(cat ${SESSION_DIR}/tasks/task-NNN.md). Write your result summary to ${SESSION_DIR}/tasks/task-NNN.result. Start with 'Status: DONE' or 'Status: FAILED', then Files Changed and Summary sections."
-   ```
-
-2. **Poll for result:**
-   ```bash
-   swarm_poll_result "${SESSION_DIR}/tasks/task-NNN.md" 300
-   ```
-   Result is only accepted when file exists, is non-empty, AND contains a `Status:` marker line.
-
-3. **Read and evaluate result:**
-   - Status: DONE → accept, move to next task
-   - Status: FAILED → `swarm_clear_result`, retry with clarified prompt (max 2 retries)
-   - Timeout → escalate to user
-
-4. **Update progress:**
-   ```bash
-   swarm_update_ledger_field "${SESSION_DIR}" "tasks_done" "N"
-   swarm_set_progress "Task N/Total" "0.${progress}"
-   ```
-
-**Parallel dispatch** (when tasks are independent or `--parallel`):
-- Dispatch all independent tasks simultaneously
-- Poll for all results concurrently
-- Proceed to dependent tasks only after dependencies complete
-
-**For simple tasks (two-agent loop):**
-- Skip task file creation
-- Claude implements directly, then delegates review to Codex using `command_exec` from registry:
-  ```bash
-  # Uses command_exec from agents.yaml (e.g., "codex exec")
-  codex exec "Review the changes in $(git diff --stat). Focus on correctness, edge cases, security. Write findings to ${SESSION_DIR}/reviews/review-001.result. Start with 'Status: DONE' or 'Status: NEEDS_REVISION'."
-  ```
-- Before each retry: `swarm_clear_result` on the review file
-- Iterate if NEEDS_REVISION (max 3 rounds)
-
-### 3.3 Claude Subagent Dispatch (parallel work)
+### 3.4 Claude Subagent Dispatch (parallel work)
 
 For tasks that benefit from Claude's tools (research, test writing, refactoring):
 
@@ -248,6 +250,17 @@ Agent(
 ```
 
 This runs as a Claude Code subagent — no pane needed, uses native Agent tool.
+
+### 3.5 Simple Task Path (two-agent loop)
+
+**For simple tasks (two-agent loop):**
+- Skip task file creation and wave grouping
+- Claude implements directly, then delegates review to Codex using `command_exec` from registry:
+  ```bash
+  codex exec "Review the changes in $(git diff --stat). Focus on correctness, edge cases, security. Write findings to ${SESSION_DIR}/reviews/review-001.result. Start with 'Status: DONE' or 'Status: NEEDS_REVISION'."
+  ```
+- Before each retry: `swarm_clear_result` on the review file
+- Iterate if NEEDS_REVISION (max 3 rounds)
 
 ## Phase 4: Review
 
