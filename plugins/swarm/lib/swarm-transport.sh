@@ -35,11 +35,11 @@ session_id: ${session_id}
 phase: init
 plan_source: null
 mux: ${mux}
-agents: []
 tasks_total: 0
 tasks_done: 0
 created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+agents: []
 EOF
 }
 
@@ -49,7 +49,28 @@ swarm_update_ledger_field() {
   local value="$3"
   local ledger="${session_dir}/ledger.yaml"
   if [[ -f "${ledger}" ]]; then
-    sed -i '' "s/^${field}: .*/${field}: ${value}/" "${ledger}"
+    sed -i '' "s|^${field}: .*|${field}: ${value}|" "${ledger}"
+    sed -i '' "s|^updated: .*|updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)|" "${ledger}"
+  fi
+}
+
+swarm_register_agent() {
+  local session_dir="$1"
+  local name="$2"
+  local pane_id="$3"
+  local role="${4:-worker}"
+  local ledger="${session_dir}/ledger.yaml"
+  if [[ -f "${ledger}" ]]; then
+    # Replace empty agents list or append to existing entries
+    if grep -q 'agents: \[\]' "${ledger}"; then
+      sed -i '' "s/^agents: \[\]/agents:/" "${ledger}"
+    fi
+    cat >> "${ledger}" << EOF
+  - name: ${name}
+    pane_id: ${pane_id}
+    role: ${role}
+    status: idle
+EOF
     sed -i '' "s/^updated: .*/updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)/" "${ledger}"
   fi
 }
@@ -71,7 +92,7 @@ swarm_spawn_agent() {
       output=$(cmux new-surface 2>/dev/null || echo "")
       pane_id=$(echo "${output}" | grep -o 'surface:[0-9]*' | head -1)
       if [[ -n "${pane_id}" ]]; then
-        cmux send --surface "${pane_id}" "cd ${workdir} && ${command}" >/dev/null 2>&1
+        cmux send --surface "${pane_id}" "cd '${workdir}' && ${command}" >/dev/null 2>&1
         cmux send-key --surface "${pane_id}" Enter >/dev/null 2>&1
         cmux rename-tab --surface "${pane_id}" "${name}" >/dev/null 2>&1 || true
       fi
@@ -122,7 +143,7 @@ swarm_check_agent_alive() {
       cmux read-screen --surface "${pane_id}" --lines 1 >/dev/null 2>&1
       ;;
     tmux)
-      tmux has-session -t "${pane_id}" 2>/dev/null
+      tmux display-message -p -t "${pane_id}" '' 2>/dev/null
       ;;
     none)
       if [[ "${pane_id}" == pid:* ]]; then
@@ -147,7 +168,8 @@ swarm_write_task() {
 swarm_check_result() {
   local task_file="$1"
   local result_file="${task_file%.md}.result"
-  [[ -f "${result_file}" ]] && [[ -s "${result_file}" ]]
+  # Only accept results that contain the completion marker
+  [[ -f "${result_file}" ]] && [[ -s "${result_file}" ]] && grep -q '^Status:' "${result_file}"
 }
 
 swarm_read_result() {
@@ -158,6 +180,13 @@ swarm_read_result() {
   else
     echo ""
   fi
+}
+
+swarm_clear_result() {
+  # Remove stale .result before retrying a task
+  local task_file="$1"
+  local result_file="${task_file%.md}.result"
+  rm -f "${result_file}"
 }
 
 swarm_poll_result() {
@@ -253,8 +282,10 @@ swarm_cleanup() {
 
 swarm_find_stale_sessions() {
   local project_dir="${1:-.}"
+  local swarm_dir="${project_dir}/.swarm"
+  [[ -d "${swarm_dir}" ]] || return 0
   local stale=()
-  for ledger in "${project_dir}"/.swarm/*/ledger.yaml; do
+  for ledger in "${swarm_dir}"/*/ledger.yaml; do
     [[ -f "${ledger}" ]] || continue
     local phase
     phase=$(grep '^phase:' "${ledger}" | awk '{print $2}')
@@ -262,7 +293,9 @@ swarm_find_stale_sessions() {
       stale+=("$(dirname "${ledger}")")
     fi
   done
-  printf '%s\n' "${stale[@]}"
+  if (( ${#stale[@]} > 0 )); then
+    printf '%s\n' "${stale[@]}"
+  fi
 }
 
 # ── Gitignore ─────────────────────────────────────────────────────
@@ -274,4 +307,113 @@ swarm_ensure_gitignore() {
       echo '.swarm/' >> "${project_dir}/.gitignore"
     fi
   fi
+}
+
+# ── Wave Grouping ────────────────────────────────────────────────
+
+swarm_group_waves() {
+  # Reads task files, builds dependency graph, returns wave assignments.
+  # Uses inline Python for topological sort + cycle detection.
+  # Exit codes: 0=success, 2=cycle detected
+  local session_dir="$1"
+  local tasks_dir="${session_dir}/tasks"
+
+  python3 - "${tasks_dir}" << 'PYEOF'
+import sys, re, os
+from collections import defaultdict
+
+tasks_dir = sys.argv[1]
+task_files = sorted(f for f in os.listdir(tasks_dir) if f.startswith("task-") and f.endswith(".md"))
+
+if not task_files:
+    sys.exit(0)
+
+# Parse each task for "Depends On" and "Files to Touch"
+task_deps = {}      # task_id -> set of explicit dependency task_ids
+task_files_map = {}  # task_id -> set of file paths
+task_ids = []
+
+for tf in task_files:
+    task_id = tf.replace(".md", "")
+    task_ids.append(task_id)
+    task_deps[task_id] = set()
+    task_files_map[task_id] = set()
+
+    with open(os.path.join(tasks_dir, tf)) as fh:
+        content = fh.read()
+
+    # Parse "## Depends On" section
+    dep_match = re.search(r'## Depends On\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
+    if dep_match:
+        for line in dep_match.group(1).strip().splitlines():
+            line = line.strip().lstrip("- ").split("#")[0].strip()
+            if line:
+                task_deps[task_id].add(line)
+
+    # Parse "## Files to Touch" section
+    files_match = re.search(r'## Files to Touch\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
+    if files_match:
+        for line in files_match.group(1).strip().splitlines():
+            line = line.strip().lstrip("- ").split("#")[0].strip()
+            if line:
+                task_files_map[task_id].add(line)
+
+# Build directed dependency graph
+graph = defaultdict(set)  # task_id -> set of tasks it depends on
+for tid in task_ids:
+    graph[tid] = set(task_deps[tid])
+
+# Add file-overlap edges (later task depends on earlier)
+for i, t1 in enumerate(task_ids):
+    for t2 in task_ids[i+1:]:
+        if task_files_map[t1] & task_files_map[t2]:
+            graph[t2].add(t1)
+
+# Topological sort (Kahn's algorithm) with cycle detection
+in_degree = {tid: 0 for tid in task_ids}
+adj = defaultdict(set)  # forward edges: dep -> dependents
+for tid in task_ids:
+    for dep in graph[tid]:
+        if dep in in_degree:
+            adj[dep].add(tid)
+            in_degree[tid] += 1
+
+queue = [tid for tid in task_ids if in_degree[tid] == 0]
+waves = {}
+wave_num = 1
+processed = 0
+
+while queue:
+    next_queue = []
+    # Tasks with unknown file scope (empty Files to Touch) get solo waves
+    normal = [t for t in queue if task_files_map.get(t)]
+    unknown = [t for t in queue if not task_files_map.get(t)]
+
+    if normal:
+        for tid in normal:
+            waves[tid] = wave_num
+            processed += 1
+        wave_num += 1
+
+    for tid in unknown:
+        waves[tid] = wave_num
+        processed += 1
+        wave_num += 1
+
+    for tid in queue:
+        for dep_tid in adj[tid]:
+            in_degree[dep_tid] -= 1
+            if in_degree[dep_tid] == 0:
+                next_queue.append(dep_tid)
+    queue = sorted(next_queue)
+
+# Cycle detection
+if processed < len(task_ids):
+    remaining = [tid for tid in task_ids if tid not in waves]
+    print(f"CYCLE_DETECTED: {' -> '.join(remaining)}", file=sys.stderr)
+    sys.exit(2)
+
+for tid in task_ids:
+    print(f"{tid}:{waves[tid]}")
+PYEOF
 }
