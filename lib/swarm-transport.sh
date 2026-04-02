@@ -37,6 +37,10 @@ plan_source: null
 mux: ${mux}
 tasks_total: 0
 tasks_done: 0
+wave_count: 0
+regression_gate: null
+verification_state: null
+gap_closure_round: 0
 created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 agents: []
