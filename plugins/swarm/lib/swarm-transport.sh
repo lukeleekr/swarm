@@ -417,3 +417,80 @@ for tid in task_ids:
     print(f"{tid}:{waves[tid]}")
 PYEOF
 }
+
+# ── Regression Gate ──────────────────────────────────────────────
+
+swarm_capture_test_baseline() {
+  # Capture JUnit XML baseline before execution.
+  # Returns: "baseline" on success, "unavailable" on failure.
+  # Note: pytest exit code doesn't matter — even a red baseline is valid
+  # (it records which tests currently pass for regression comparison).
+  local session_dir="$1"
+  local xml_path="${session_dir}/test-baseline.xml"
+
+  pytest --tb=no -q --junitxml="${xml_path}" 2>/dev/null || true
+
+  if [[ -f "${xml_path}" ]] && [[ -s "${xml_path}" ]]; then
+    echo "baseline"
+  else
+    echo "unavailable"
+  fi
+}
+
+swarm_extract_passing_tests() {
+  # Parse JUnit XML, output one passing test ID per line.
+  local xml_path="$1"
+  [[ -f "${xml_path}" ]] || return 0
+
+  python3 - "${xml_path}" << 'PYEOF'
+import sys, xml.etree.ElementTree as ET
+
+tree = ET.parse(sys.argv[1])
+for tc in tree.iter("testcase"):
+    classname = tc.get("classname", "")
+    name = tc.get("name", "")
+    # A test passes if it has no failure/error/skipped children
+    if not any(tc.iter("failure")) and not any(tc.iter("error")) and not any(tc.iter("skipped")):
+        test_id = f"{classname}::{name}" if classname else name
+        print(test_id)
+PYEOF
+}
+
+swarm_check_regression() {
+  # Compare wave test results against baseline by test identity.
+  # Returns 0 if clean, 1 if regression detected.
+  # Outputs regressed test IDs to stdout.
+  local session_dir="$1"
+  local wave_num="$2"
+  local baseline_xml="${session_dir}/test-baseline.xml"
+  local wave_xml="${session_dir}/test-wave-${wave_num}.xml"
+
+  if [[ ! -f "${baseline_xml}" ]]; then
+    echo "skipped"
+    return 0
+  fi
+
+  # Run tests and capture wave XML
+  pytest --tb=line -q --junitxml="${wave_xml}" 2>/dev/null || true
+
+  if [[ ! -f "${wave_xml}" ]]; then
+    echo "skipped"
+    return 0
+  fi
+
+  # Compare passing test sets
+  local baseline_passing wave_passing
+  baseline_passing=$(swarm_extract_passing_tests "${baseline_xml}" | sort)
+  wave_passing=$(swarm_extract_passing_tests "${wave_xml}" | sort)
+
+  # Find tests that passed in baseline but not in wave (regressions)
+  local regressions
+  regressions=$(comm -23 <(echo "${baseline_passing}") <(echo "${wave_passing}"))
+
+  if [[ -n "${regressions}" ]]; then
+    echo "${regressions}"
+    return 1
+  fi
+
+  return 0
+}
