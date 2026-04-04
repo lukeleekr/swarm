@@ -44,6 +44,7 @@ verification_state: null
 gap_closure_round: 0
 tasks_completed: []
 resumed_from: null
+manager_pid: $$
 created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 agents: []
@@ -299,9 +300,11 @@ swarm_find_stale_sessions() {
   [[ -d "${swarm_dir}" ]] || return 0
   local stale=()
   while IFS= read -r ledger; do
-    local phase
+    local phase pid
     phase=$(grep '^phase:' "${ledger}" | awk '{print $2}')
-    if [[ "${phase}" != "done" ]]; then
+    pid=$(grep '^manager_pid:' "${ledger}" | awk '{print $2}')
+    # Only stale if: phase != done AND manager PID is dead
+    if [[ "${phase}" != "done" && -n "${pid}" ]] && ! kill -0 "${pid}" 2>/dev/null; then
       stale+=("$(dirname "${ledger}")")
     fi
   done < <(find "${swarm_dir}" -maxdepth 2 -name "ledger.yaml" 2>/dev/null)
@@ -519,7 +522,10 @@ swarm_find_interrupted_sessions() {
     session_dir=$(dirname "${ledger}")
     local phase
     phase=$(grep '^phase:' "${ledger}" | awk '{print $2}')
-    if [[ "${phase}" != "done" ]]; then
+    local pid
+    pid=$(grep '^manager_pid:' "${ledger}" | awk '{print $2}')
+    # Only interrupted if: phase != done AND manager PID is dead
+    if [[ "${phase}" != "done" && -n "${pid}" ]] && ! kill -0 "${pid}" 2>/dev/null; then
       local results
       results=$(find "${session_dir}/tasks" -name "*.result" 2>/dev/null | wc -l | tr -d ' ')
       if (( results > 0 )); then
