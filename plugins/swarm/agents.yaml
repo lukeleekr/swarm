@@ -1,0 +1,89 @@
+# Swarm Agent Registry
+# Add any CLI agent by adding an entry below.
+# Required: command_exec (one-shot), roles
+# Optional: command_interactive (for pane mode), capabilities, init_prompt
+#
+# command_exec: runs once per task, exits when done (headless + pane dispatch)
+# command_interactive: long-lived REPL for pane mode (receives tasks via terminal I/O)
+#   If command_interactive is not set, each task spawns a fresh command_exec process.
+#
+# Model routing for Claude agents:
+#   The swarm manager classifies each task as simple/standard/complex and appends
+#   --model haiku/sonnet/opus to the command. See model_routing below.
+#
+# Usage:
+#   /swarm <task>                  — uses role_priority to auto-select agents
+#   /swarm --agents codex <task>   — force specific agent(s)
+#   /swarm --agents gemini <task>  — use Gemini instead of Codex
+
+agents:
+  codex:
+    # Uses ~/.codex/config.toml defaults: model=gpt-5.4, reasoning=high, approval=never, sandbox=danger-full-access
+    command_exec: "codex exec"
+    command_interactive: "codex"
+    roles: [coder]
+    capabilities: [implement, debug]
+    init_prompt: |
+      You are a coding agent in a swarm orchestration.
+      Your task is described in the file path provided.
+      Implement the task in the codebase.
+      When done, write a result summary to the same path but with .result extension.
+      Include: Status (DONE/FAILED), files changed, and a brief summary.
+
+  gemini:
+    command_exec: "gemini --cli"
+    command_interactive: "gemini"
+    roles: [coder, reviewer, designer]
+    capabilities: [implement, review, design]
+    init_prompt: |
+      You are a coding agent in a swarm orchestration.
+      Your task is described in the file path provided.
+      Implement the task in the codebase.
+      When done, write a result summary to the same path but with .result extension.
+      Include: Status (DONE/FAILED), files changed, and a brief summary.
+
+  claude:
+    command_exec: "claude --dangerously-skip-permissions -p"
+    command_interactive: "claude --dangerously-skip-permissions"
+    roles: [coder, reviewer, researcher]
+    capabilities: [implement, review, debug, research, refactor]
+    supports_model_routing: true
+    init_prompt: |
+      You are a coding agent in a swarm orchestration.
+      Your task is described in the file path provided.
+      Implement the task in the codebase.
+      When done, write a result summary to the same path but with .result extension.
+      Include: Status (DONE/FAILED), files changed, and a brief summary.
+
+  # Template for adding new agents:
+  # my_agent:
+  #   command_exec: "my-cli exec"
+  #   command_interactive: "my-cli"
+  #   roles: [coder, reviewer]
+  #   capabilities: [implement, review]
+  #   init_prompt: |
+  #     Your task is in the file path provided...
+
+# When the manager needs a role, it picks the first agent listed for that role.
+# Change the order to change the default.
+role_priority:
+  coder: [codex, gemini, claude]
+  reviewer: []       # Orchestrator (Claude Opus) always reviews — no agent delegation
+  researcher: [claude]
+  designer: [gemini]
+
+# Model routing for agents with supports_model_routing: true
+# Manager classifies each task and appends --model <model> to the command.
+model_routing:
+  simple:
+    model: haiku
+    keywords: [fix, typo, rename, update, change, add comment, simple, small, trivial]
+    max_files: 2
+  standard:
+    model: sonnet
+    keywords: [implement, create, build, add, write, test]
+    max_files: 5
+  complex:
+    model: opus
+    keywords: [refactor, architect, design, system, migrate, security, optimize]
+    max_files: 999

@@ -253,13 +253,33 @@ Each agent has two command modes:
 - `command_interactive`: long-lived REPL for pane mode (tmux/cmux) — receives tasks via terminal I/O
 - `command_exec`: one-shot per task — runs, produces result, exits
 
-**Pane mode (tmux/cmux):** Spawn interactive agent, send tasks via terminal:
+**Pane mode (tmux/cmux):** Spawn one pane per parallel task using grid layout.
+Use `command_interactive` from registry. For multi-agent grids:
+- Agent 1: `split_dir="right"` (splits from main)
+- Agent 2: `split_dir="down"` from Agent 1 (top-right → 2 rows on right)
+- Agent 3: `split_dir="down"` from main (bottom-left)
+- Agent 4: `split_dir="right"` from Agent 3 (bottom-right)
+- Agent N: continue grid pattern
+
 ```bash
-CODEX_PANE=$(swarm_spawn_agent "Codex" "codex" "$(pwd)" "${SESSION_DIR}")
-swarm_register_agent "${SESSION_DIR}" "Codex" "${CODEX_PANE}" "coder"
+# Example: 4-agent grid
+PANE1=$(swarm_spawn_agent "Agent-1" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "right")
+PANE2=$(swarm_spawn_agent "Agent-2" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
+PANE3=$(swarm_spawn_agent "Agent-3" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "down")
+PANE4=$(swarm_spawn_agent "Agent-4" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "right" "${PANE3}")
+swarm_register_agent "${SESSION_DIR}" "Agent-N" "${PANE_N}" "coder"
 ```
 
 **Headless mode (none):** Don't pre-spawn. Run `command_exec` per task (see 3.3).
+
+**Model routing** (for agents with `supports_model_routing: true`):
+Read `model_routing` from registry. For each task, classify complexity by keywords + file count:
+- `simple` → append `--model haiku` (e.g., fixes, renames, single-file changes)
+- `standard` → append `--model sonnet` (e.g., implement, create, build)
+- `complex` → append `--model opus` (e.g., refactor, architect, security)
+
+For interactive panes: model is set at spawn time, so classify the WAVE's overall complexity.
+For exec mode: model is set per-task invocation.
 
 ```bash
 swarm_set_progress "Executing" "0.25"
@@ -308,9 +328,10 @@ For each wave W (1, 2, ... WAVE_COUNT):
      fi
 ```
 
-### 3.4 Claude Subagent Dispatch (parallel work)
+### 3.4 Claude Subagent Dispatch (fallback only)
 
-For tasks that benefit from Claude's tools (research, test writing, refactoring):
+**Only use when:** no multiplexer available (MUX=none) AND no external CLI agent available.
+Prefer CMUX/tmux panes (3.2) or headless exec (3.3) — subagents are invisible to the user.
 
 ```
 Agent(
@@ -320,7 +341,7 @@ Agent(
 )
 ```
 
-This runs as a Claude Code subagent — no pane needed, uses native Agent tool.
+This runs as a Claude Code subagent — no pane, no visual feedback. Last resort only.
 
 ### 3.5 Simple Task Path (two-agent loop)
 
