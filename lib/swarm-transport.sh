@@ -31,10 +31,10 @@ swarm_init_ledger() {
   local session_id="$2"
   local mux="$3"
   cat > "${session_dir}/ledger.yaml" << EOF
-session_id: ${session_id}
+session_id: '${session_id//\'/"''"}'
 phase: init
 plan_source: null
-mux: ${mux}
+mux: '${mux//\'/"''"}'
 tasks_total: 0
 tasks_done: 0
 wave_count: 0
@@ -57,8 +57,15 @@ swarm_update_ledger_field() {
   local value="$3"
   local ledger="${session_dir}/ledger.yaml"
   if [[ -f "${ledger}" ]]; then
-    sed -i '' "s|^${field}: .*|${field}: ${value}|" "${ledger}"
-    sed -i '' "s|^updated: .*|updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)|" "${ledger}"
+    # Escape sed metacharacters in field and value
+    local esc_field esc_value
+    esc_field=$(printf '%s' "${field}" | sed 's/[&/\]/\\&/g')
+    esc_value=$(printf '%s' "${value}" | sed 's/[&/\]/\\&/g')
+    local tmp
+    tmp=$(mktemp "${ledger}.XXXXXX")
+    sed "s|^${esc_field}: .*|${esc_field}: ${esc_value}|" "${ledger}" \
+      | sed "s|^updated: .*|updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)|" \
+      > "${tmp}" && mv "${tmp}" "${ledger}" || rm -f "${tmp}"
   fi
 }
 
@@ -69,17 +76,23 @@ swarm_register_agent() {
   local role="${4:-worker}"
   local ledger="${session_dir}/ledger.yaml"
   if [[ -f "${ledger}" ]]; then
+    local tmp
     # Replace empty agents list or append to existing entries
     if grep -q 'agents: \[\]' "${ledger}"; then
-      sed -i '' "s/^agents: \[\]/agents:/" "${ledger}"
+      tmp=$(mktemp "${ledger}.XXXXXX")
+      sed "s/^agents: \[\]/agents:/" "${ledger}" > "${tmp}" && mv "${tmp}" "${ledger}" || rm -f "${tmp}"
     fi
+    # Quote name and role for YAML safety; pane_id left unquoted (parsed by cleanup)
+    local safe_name="${name//\'/"''"}"
+    local safe_role="${role//\'/"''"}"
     cat >> "${ledger}" << EOF
-  - name: ${name}
+  - name: '${safe_name}'
     pane_id: ${pane_id}
-    role: ${role}
+    role: '${safe_role}'
     status: idle
 EOF
-    sed -i '' "s/^updated: .*/updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)/" "${ledger}"
+    tmp=$(mktemp "${ledger}.XXXXXX")
+    sed "s/^updated: .*/updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)/" "${ledger}" > "${tmp}" && mv "${tmp}" "${ledger}" || rm -f "${tmp}"
   fi
 }
 
@@ -106,7 +119,10 @@ swarm_spawn_agent() {
       fi
       pane_id=$(echo "${output}" | grep -o 'surface:[0-9]*' | head -1)
       if [[ -n "${pane_id}" ]]; then
-        cmux send --surface "${pane_id}" "cd '${workdir}' && ${command}" >/dev/null 2>&1
+        # Send cd and command separately to avoid shell interpolation issues
+        cmux send --surface "${pane_id}" "cd $(printf '%q' "${workdir}")" >/dev/null 2>&1
+        cmux send-key --surface "${pane_id}" Enter >/dev/null 2>&1
+        cmux send --surface "${pane_id}" "${command}" >/dev/null 2>&1
         cmux send-key --surface "${pane_id}" Enter >/dev/null 2>&1
         cmux rename-tab --surface "${pane_id}" "${name}" >/dev/null 2>&1 || true
       fi
@@ -115,21 +131,59 @@ swarm_spawn_agent() {
       # Map split_dir to tmux flags: right=-h, down=-v
       local tmux_split_flag="-h"
       [[ "${split_dir}" == "down" ]] && tmux_split_flag="-v"
+      # tmux -c sets workdir; command passed as separate arg (no string interpolation)
       if [[ -n "${split_from}" ]]; then
-        # split_from is a tmux pane_id like %0, %1
-        pane_id=$(tmux split-window ${tmux_split_flag} -t "${split_from}" -d -c "${workdir}" -P -F '#{pane_id}' "${command}" 2>/dev/null || echo "")
+        pane_id=$(tmux split-window ${tmux_split_flag} -t "${split_from}" -d -c "${workdir}" -P -F '#{pane_id}' -- "${command}" 2>/dev/null || echo "")
       else
-        pane_id=$(tmux split-window ${tmux_split_flag} -d -c "${workdir}" -P -F '#{pane_id}' "${command}" 2>/dev/null || echo "")
+        pane_id=$(tmux split-window ${tmux_split_flag} -d -c "${workdir}" -P -F '#{pane_id}' -- "${command}" 2>/dev/null || echo "")
       fi
       ;;
     none)
       local log_file="${session_dir}/logs/${name}.log"
-      nohup bash -c "cd '${workdir}' && ${command}" > "${log_file}" 2>&1 &
+      # Use exec "$@" to avoid eval; command is word-split intentionally (simple CLI invocations)
+      nohup bash -c 'cd "$1" && shift && exec "$@"' _ "${workdir}" ${command} > "${log_file}" 2>&1 &
       pane_id="pid:$!"
       ;;
   esac
 
   echo "${pane_id}"
+}
+
+swarm_wait_agent_ready() {
+  # Wait for an agent pane to be ready to accept input.
+  # Auto-accepts trust/folder prompts (Codex and Claude CLI).
+  # Returns 0 when ready, 1 on timeout.
+  local pane_id="$1"
+  local timeout="${2:-30}"
+  local mux
+  mux="$(swarm_detect_mux)"
+
+  [[ "${mux}" == "none" ]] && return 0  # headless: always ready
+
+  local elapsed=0
+  while (( elapsed < timeout )); do
+    local screen
+    screen=$(cmux read-screen --surface "${pane_id}" --lines 10 2>/dev/null || echo "")
+
+    # Detect trust/folder prompts and auto-accept by pressing Enter
+    if echo "${screen}" | grep -qiE 'trust.*(folder|directory|contents)|Do you trust'; then
+      cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
+      sleep 3
+      elapsed=$((elapsed + 3))
+      continue
+    fi
+
+    # Agent ready patterns:
+    # Codex: ">" or "›" at line start (input prompt)
+    # Claude: "❯" or ">" at line start
+    # Shell: "$" or "%" at end of line
+    if echo "${screen}" | grep -qE '(^[>❯›] |[$%] *$)'; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  return 1
 }
 
 swarm_kill_agent() {
@@ -140,17 +194,19 @@ swarm_kill_agent() {
   case "${mux}" in
     cmux)
       if [[ "${pane_id}" == surface:* ]]; then
-        # 1. Ctrl+C — clear escape mode / interrupt running process
+        # 1. Ctrl+C — interrupt running process
         cmux send-key --surface "${pane_id}" ctrl+c 2>/dev/null || true
         sleep 0.5
-        # 2. /exit — works for both Claude CLI and Codex CLI
+        # 2. /exit — exit Claude CLI / Codex CLI
         cmux send --surface "${pane_id}" "/exit" 2>/dev/null || true
         cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
         sleep 2
-        # 3. exit — kill the underlying shell (pane closes when shell exits)
+        # 3. exit — exit the shell
         cmux send --surface "${pane_id}" "exit" 2>/dev/null || true
         cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
         sleep 1
+        # 4. Force close: cmux close-surface is the definitive kill
+        cmux close-surface --surface "${pane_id}" 2>/dev/null || true
       fi
       ;;
     tmux)
@@ -160,6 +216,10 @@ swarm_kill_agent() {
       if [[ "${pane_id}" == pid:* ]]; then
         local pid="${pane_id#pid:}"
         kill "${pid}" 2>/dev/null || true
+        sleep 1
+        if kill -0 "${pid}" 2>/dev/null; then
+          kill -9 "${pid}" 2>/dev/null || true
+        fi
       fi
       ;;
   esac
@@ -245,6 +305,13 @@ swarm_pipe_prompt() {
   local mux
   mux="$(swarm_detect_mux)"
 
+  # Wait for agent to be ready before sending
+  if [[ "${mux}" != "none" ]]; then
+    swarm_wait_agent_ready "${pane_id}" 30 || {
+      echo "WARNING: agent ${pane_id} not ready after 30s, sending anyway" >&2
+    }
+  fi
+
   case "${mux}" in
     cmux)
       cmux send --surface "${pane_id}" "${prompt}" >/dev/null 2>&1
@@ -299,9 +366,16 @@ swarm_cleanup() {
 
   if [[ ! -f "${ledger}" ]]; then return 0; fi
 
-  grep 'pane_id:' "${ledger}" 2>/dev/null | awk '{print $2}' | while IFS= read -r pane_id; do
+  while IFS= read -r pane_id; do
     [[ -n "${pane_id}" ]] && swarm_kill_agent "${pane_id}"
-  done
+  done < <(grep 'pane_id:' "${ledger}" 2>/dev/null | awk '{print $2}')
+
+  # Verify all panes are actually gone
+  while IFS= read -r pane_id; do
+    if [[ -n "${pane_id}" ]] && swarm_check_agent_alive "${pane_id}" 2>/dev/null; then
+      swarm_log "warning" "Pane ${pane_id} still alive after cleanup"
+    fi
+  done < <(grep 'pane_id:' "${ledger}" 2>/dev/null | awk '{print $2}')
 
   swarm_update_ledger_field "${session_dir}" "phase" "done"
   swarm_set_progress "Done" "1.0"
@@ -526,6 +600,56 @@ swarm_check_regression() {
   return 0
 }
 
+# ── Flaky Test Detection ─────────────────────────────────────────
+
+swarm_extract_failing_tests() {
+  # Parse pytest output (text, not XML) and extract failing test IDs.
+  # Expects pytest --tb=short or --tb=line output on stdin or as file arg.
+  local input="${1:-/dev/stdin}"
+  # Match lines like "FAILED tests/test_foo.py::test_bar - AssertionError"
+  grep -E '^FAILED ' "${input}" 2>/dev/null | sed 's/^FAILED //' | sed 's/ - .*//'
+}
+
+swarm_classify_test_failures() {
+  # Rerun failing tests up to 2 times, classify each as:
+  #   deterministic — fails every run (real bug)
+  #   flaky — passes on retry (unreliable test)
+  #   infrastructure — ImportError, ConnectionRefused, timeout (env issue)
+  # Usage: swarm_classify_test_failures "$session_dir" "test_id1 test_id2 ..."
+  # Outputs one line per test: "test_id:classification"
+  local session_dir="$1"
+  shift
+  local test_ids=("$@")
+  local infra_patterns='ImportError|ModuleNotFoundError|ConnectionRefused|TimeoutError|OSError'
+
+  for test_id in "${test_ids[@]}"; do
+    # Check for infrastructure error in original output
+    local original_output="${session_dir}/verify-pytest.txt"
+    if [[ -f "${original_output}" ]] && grep -qE "${infra_patterns}" "${original_output}" 2>/dev/null; then
+      # Verify this test specifically has infra error
+      if grep -A5 "${test_id}" "${original_output}" 2>/dev/null | grep -qE "${infra_patterns}"; then
+        echo "${test_id}:infrastructure"
+        continue
+      fi
+    fi
+
+    # Retry the test up to 2 times
+    local passed=false
+    for _retry in 1 2; do
+      if pytest "${test_id}" --tb=no -q 2>/dev/null; then
+        passed=true
+        break
+      fi
+    done
+
+    if [[ "${passed}" == true ]]; then
+      echo "${test_id}:flaky"
+    else
+      echo "${test_id}:deterministic"
+    fi
+  done
+}
+
 # ── Session Resume ───────────────────────────────────────────────
 
 swarm_find_interrupted_sessions() {
@@ -673,6 +797,7 @@ swarm_get_acceptance_criteria() {
 swarm_get_files_changed() {
   # Extract file paths from a .result file's "Files Changed:" section.
   # Parses "- path/to/file" lines, validates each file exists.
+  # Non-existent files are emitted with a "[missing]" suffix on stderr.
   local result_file="$1"
   [[ -f "${result_file}" ]] || return 0
   local in_section=false
@@ -684,7 +809,12 @@ swarm_get_files_changed() {
       inline=$(echo "${line}" | sed 's/^Files Changed:[[:space:]]*//' | tr -d '[]' | tr ',' '\n')
       echo "${inline}" | while IFS= read -r f; do
         f=$(echo "${f}" | xargs)  # trim whitespace
-        [[ -n "${f}" ]] && echo "${f}"
+        if [[ -n "${f}" ]]; then
+          if [[ ! -f "${f}" ]]; then
+            echo "WARNING: file not found: ${f}" >&2
+          fi
+          echo "${f}"
+        fi
       done
       continue
     fi
@@ -697,7 +827,12 @@ swarm_get_files_changed() {
       if [[ "${line}" =~ ^[[:space:]]*-[[:space:]] ]]; then
         local filepath
         filepath=$(echo "${line}" | sed 's/^[[:space:]]*-[[:space:]]*//' | sed 's/[[:space:]]*(.*//' | xargs)
-        [[ -n "${filepath}" ]] && echo "${filepath}"
+        if [[ -n "${filepath}" ]]; then
+          if [[ ! -f "${filepath}" ]]; then
+            echo "WARNING: file not found: ${filepath}" >&2
+          fi
+          echo "${filepath}"
+        fi
       fi
     fi
   done < "${result_file}"
@@ -764,4 +899,44 @@ swarm_next_revision_num() {
   local max
   max=$(swarm_get_revision_count "${session_dir}" "${task_id}")
   echo $(( max + 1 ))
+}
+
+swarm_record_revision_progress() {
+  # Record criteria pass/fail for a revision round. Writes a sidecar file
+  # that tracks convergence: are more criteria passing each round?
+  # Usage: swarm_record_revision_progress "$session_dir" "task-001" 1 "3/5"
+  local session_dir="$1"
+  local task_id="$2"
+  local rev_num="$3"
+  local criteria_summary="$4"  # e.g. "3/5 passed" or "PASS:foo,bar FAIL:baz"
+  local progress_file="${session_dir}/tasks/${task_id}.progress"
+  echo "rev${rev_num}: ${criteria_summary} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${progress_file}"
+}
+
+swarm_check_revision_convergence() {
+  # Check if revisions are converging (more criteria passing) or cycling.
+  # Returns: "converging", "stalled", or "no_data"
+  local session_dir="$1"
+  local task_id="$2"
+  local progress_file="${session_dir}/tasks/${task_id}.progress"
+  [[ -f "${progress_file}" ]] || { echo "no_data"; return 0; }
+  local lines
+  lines=$(wc -l < "${progress_file}" | tr -d ' ')
+  if (( lines < 2 )); then
+    echo "no_data"
+    return 0
+  fi
+  # Compare last two entries — extract pass counts (assumes "N/M passed" format)
+  local prev_pass last_pass
+  prev_pass=$(tail -2 "${progress_file}" | head -1 | grep -o '[0-9]*/[0-9]*' | head -1 | cut -d/ -f1)
+  last_pass=$(tail -1 "${progress_file}" | grep -o '[0-9]*/[0-9]*' | head -1 | cut -d/ -f1)
+  if [[ -z "${prev_pass}" || -z "${last_pass}" ]]; then
+    echo "no_data"
+    return 0
+  fi
+  if (( last_pass > prev_pass )); then
+    echo "converging"
+  else
+    echo "stalled"
+  fi
 }
