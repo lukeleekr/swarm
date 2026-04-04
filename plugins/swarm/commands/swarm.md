@@ -7,6 +7,8 @@ argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequenti
 
 > **allowed-tools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Agent`, `TaskCreate`, `TaskUpdate`, `TaskList`, `Skill`, `AskUserQuestion`
 
+> **HARD RULE — NO MCP TOOLS FOR AGENT DISPATCH**: NEVER use `mcp__codex__codex`, `mcp__gemini__*`, or any MCP server tool to dispatch work to agents. ALL agent interaction MUST go through the transport lib: `swarm_spawn_agent` (spawn in pane), `swarm_pipe_prompt` (send work), `swarm_poll_result` (get results). Using MCP tools bypasses the visual pane orchestration and is a protocol violation.
+
 <!-- Phase Flow (V2 complete):
   Phase 0: Init (mux detect, interrupted/stale detection, --resume, registry, session)
   Phase 1: Context detection + complexity classification
@@ -364,10 +366,20 @@ For each wave W (1, 2, ... WAVE_COUNT):
        # Re-evaluate: run Steps A-E on the REVISION result
        STATUS=$(swarm_check_result_status "${REV_FILE%.md}.result")
        if [[ "${STATUS}" != "DONE" ]]; then
+         swarm_record_revision_progress "${SESSION_DIR}" "task-NNN" "${NEXT_REV}" "0/${TOTAL_CRITERIA} passed (${STATUS})"
          continue  # FAILED/MALFORMED → try another revision
        fi
        # STATUS is DONE — but MUST re-check acceptance criteria (Step D)
        # Read the actual files changed, compare against CRITERIA
+       # Count passing criteria: PASSED_COUNT / TOTAL_CRITERIA
+       swarm_record_revision_progress "${SESSION_DIR}" "task-NNN" "${NEXT_REV}" "${PASSED_COUNT}/${TOTAL_CRITERIA} passed"
+       # Check convergence before continuing
+       CONVERGENCE=$(swarm_check_revision_convergence "${SESSION_DIR}" "task-NNN")
+       if [[ "${CONVERGENCE}" == "stalled" ]]; then
+         # Not making progress — escalate early instead of wasting a revision
+         echo "Revision stalled for task-NNN (no improvement). Escalating."
+         break
+       fi
        # If all criteria PASS → break (task accepted)
        # If criteria still FAIL → update ISSUES_DESCRIPTION and continue loop
        # DO NOT break here without re-evaluating criteria.
@@ -446,9 +458,14 @@ This runs as a Claude Code subagent — no pane, no visual feedback. Last resort
 
 After all tasks complete:
 
-### 4.1 Determine reviewer
+### 4.1 Determine reviewer (with pre-flight validation)
 
 Read the `--agents` flag used in this session. Select reviewer per the table above.
+
+**Pre-flight check (mandatory):** Before dispatching any review, validate that the selected coder and reviewer are not the same agent type. Specifically:
+- If `--agents codex,codex` or any configuration where all coders and the reviewer resolve to the same agent type → **WARN the user**: "Cross-review violation: coder and reviewer are the same agent ([agent]). Reviews by the same agent that wrote the code provide weaker guarantees. Override? [Y/n]"
+- If user declines override → fall back to Claude Opus orchestrator as reviewer (always available).
+- Two Claude variants (e.g., Claude Sonnet coding, Claude Opus reviewing) are acceptable — the cross-review rule applies to the agent *identity*, not the model.
 
 ### 4.2 Prepare review context
 
