@@ -112,7 +112,15 @@ swarm_spawn_agent() {
       fi
       ;;
     tmux)
-      pane_id=$(tmux split-window -h -d -c "${workdir}" -P -F '#{pane_id}' "${command}" 2>/dev/null || echo "")
+      # Map split_dir to tmux flags: right=-h, down=-v
+      local tmux_split_flag="-h"
+      [[ "${split_dir}" == "down" ]] && tmux_split_flag="-v"
+      if [[ -n "${split_from}" ]]; then
+        # split_from is a tmux pane_id like %0, %1
+        pane_id=$(tmux split-window ${tmux_split_flag} -t "${split_from}" -d -c "${workdir}" -P -F '#{pane_id}' "${command}" 2>/dev/null || echo "")
+      else
+        pane_id=$(tmux split-window ${tmux_split_flag} -d -c "${workdir}" -P -F '#{pane_id}' "${command}" 2>/dev/null || echo "")
+      fi
       ;;
     none)
       local log_file="${session_dir}/logs/${name}.log"
