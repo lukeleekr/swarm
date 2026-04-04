@@ -96,7 +96,7 @@ swarm_spawn_agent() {
   case "${mux}" in
     cmux)
       local output
-      output=$(cmux new-surface 2>/dev/null || echo "")
+      output=$(cmux new-split right 2>/dev/null || echo "")
       pane_id=$(echo "${output}" | grep -o 'surface:[0-9]*' | head -1)
       if [[ -n "${pane_id}" ]]; then
         cmux send --surface "${pane_id}" "cd '${workdir}' && ${command}" >/dev/null 2>&1
