@@ -1,6 +1,6 @@
 ---
 description: "Manager-orchestrated multi-agent swarm — auto-routes simple tasks to 2-agent loop, complex tasks to full pipeline"
-argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequential] [--resume] [--skip-discuss]"
+argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequential] [--resume] [--skip-discuss] [--review-agents N]"
 ---
 
 # /swarm — Multi-Agent Orchestration
@@ -34,7 +34,8 @@ Parse `$ARGUMENTS`:
 - `--dry-run` → show plan + team composition without executing
 - `--sequential` → force strict task-by-task ordering (disable wave parallelism)
 - `--resume` → resume interrupted session instead of starting fresh
-- `--skip-discuss` → skip Phase 1.5 grey area extraction
+- `--skip-discuss` → skip Phase 1.5 grey area extraction and Phase 2.5 plan review
+- `--review-agents N` → force exactly N parallel Codex reviewers for plan review (1-4, default: auto)
 - Everything else → task description
 
 ## Phase 0: Prerequisites & Init
@@ -247,6 +248,93 @@ If `--dry-run`: present the task list with wave assignments and team composition
 
 ```bash
 swarm_set_progress "Planning" "0.15"
+```
+
+## Phase 2.5: Plan Review Gate
+
+**Skip when:** simple task (two-agent loop), `--skip-discuss` flag, or single-task plan.
+
+Opus wrote the plan — Codex reviews it before execution begins. Cross-review principle: the planner never reviews their own plan.
+
+### 2.5.1 Determine reviewer count
+
+Smart routing — Opus decides how many parallel Codex reviewers to spawn based on plan complexity:
+
+| Plan Size | Default Reviewers | Focus |
+|-----------|------------------|-------|
+| 1-3 tasks, 1 wave | 1 | General feasibility |
+| 4-8 tasks, 2+ waves | 2 | Feasibility + dependency/risk |
+| 9+ tasks or 3+ waves | 3 | Feasibility + dependency + scope/security |
+
+**Manual override:** `--review-agents N` flag forces exactly N parallel reviewers (min 1, max 4). Example: `/swarm --review-agents 3 Build the API`.
+
+Each reviewer gets a **different focus prompt** to avoid redundant feedback:
+
+| Reviewer | Focus |
+|----------|-------|
+| Codex-Feasibility | Can each task be implemented as described? Missing deps? |
+| Codex-Risk | Security, performance, correctness risks? Edge cases? |
+| Codex-Scope | Unnecessary work? Gold-plating? Simpler alternatives? |
+| Codex-Architecture | Cross-task consistency? Integration points sound? |
+
+### 2.5.2 Spawn parallel reviewers
+
+Spawn N Codex agents in CMUX panes using grid layout:
+
+```bash
+# Example: 2 reviewers
+PANE1=$(swarm_spawn_agent "Codex-Feasibility" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+PANE2=$(swarm_spawn_agent "Codex-Risk" "codex" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
+
+swarm_register_agent "${SESSION_DIR}" "Codex-Feasibility" "${PANE1}" "reviewer"
+swarm_register_agent "${SESSION_DIR}" "Codex-Risk" "${PANE2}" "reviewer"
+
+swarm_wait_agent_ready "${PANE1}" 30
+swarm_wait_agent_ready "${PANE2}" 30
+
+swarm_pipe_prompt "${PANE1}" "Review plan in ${SESSION_DIR}/tasks/. Focus: FEASIBILITY. [prompt]"
+swarm_pipe_prompt "${PANE2}" "Review plan in ${SESSION_DIR}/tasks/. Focus: RISKS. [prompt]"
+```
+
+Each reviewer writes to `${SESSION_DIR}/reviews/plan-review-{focus}.result` with `Status: APPROVED` or `Status: NEEDS_REVISION`.
+
+Poll all results in parallel.
+
+### 2.5.3 Orchestrator consolidates reviews
+
+Opus reads ALL review results and synthesizes into a single batch table:
+
+```markdown
+## Plan Review — Consolidated Findings
+
+Reviewers: Codex-Feasibility (APPROVED), Codex-Risk (NEEDS_REVISION)
+
+| # | Reviewer | Task | Finding | Severity | Recommendation |
+|---|----------|------|---------|----------|----------------|
+| 1 | Risk | task-003 | SQL injection in query builder | Critical | Parameterize queries |
+| 2 | Feasibility | task-005 | Depends on API not yet deployed | Important | Add mock/stub task |
+| 3 | Risk | task-001 | No auth on admin endpoint | Important | Add auth middleware |
+
+Accept plan as-is, or adjust tasks?
+```
+
+**Routing:**
+- All APPROVED → proceed to Phase 3 automatically
+- Any NEEDS_REVISION → present consolidated table, wait for user decision
+- User approves → proceed
+- User adjusts → update task files, re-run wave grouping if needed
+
+### 2.5.4 Cleanup reviewer panes
+
+```bash
+# Kill all reviewer panes — plan review is a gate, not persistent
+for PANE in ${REVIEW_PANES[@]}; do
+  swarm_kill_agent "${PANE}"
+done
+```
+
+```bash
+swarm_set_progress "Plan Reviewed" "0.20"
 ```
 
 ## Phase 3: Execute
