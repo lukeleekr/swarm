@@ -295,7 +295,11 @@ swarm_poll_result() {
   local interval="${3:-5}"
   local elapsed=0
 
-  [[ -f "${task_file}" ]] || { echo "ERROR: task file not found: ${task_file}" >&2; return 1; }
+  # Validate task file exists (skip for review files which have no .md counterpart)
+  if [[ "${task_file}" != */reviews/* ]] && [[ ! -f "${task_file}" ]]; then
+    echo "ERROR: task file not found: ${task_file}" >&2
+    return 1
+  fi
 
   while (( elapsed < timeout )); do
     if swarm_check_result "${task_file}"; then
