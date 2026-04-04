@@ -687,8 +687,8 @@ swarm_get_files_changed() {
       continue
     fi
     if [[ "${in_section}" == true ]]; then
-      # Stop at next section header
-      [[ "${line}" =~ ^[A-Z] ]] && break
+      # Stop at next section header (## or ###), not just any uppercase
+      [[ "${line}" =~ ^[[:space:]]*## ]] && break
       # Parse "- path/to/file" or "path/to/file"
       local filepath
       filepath=$(echo "${line}" | sed 's/^[[:space:]]*-[[:space:]]*//' | sed 's/[[:space:]]*(.*//' | xargs)

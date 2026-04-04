@@ -355,7 +355,7 @@ For each wave W (1, 2, ... WAVE_COUNT):
      while swarm_can_revise "${SESSION_DIR}" "task-NNN"; do
        NEXT_REV=$(swarm_next_revision_num "${SESSION_DIR}" "task-NNN")
        REV_FILE=$(swarm_write_revision_task "${SESSION_DIR}" "task-NNN" "${NEXT_REV}" \
-         "${ISSUES_DESCRIPTION}")
+         "${ISSUES_DESCRIPTION}") || { echo "ERROR: revision task creation failed"; break; }
        # Dispatch revision to the SAME agent pane
        swarm_pipe_prompt "${AGENT_PANE}" "Read and fix the issues in: ${REV_FILE}"
        # Poll for revision result
