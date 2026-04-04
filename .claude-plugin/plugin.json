@@ -1,0 +1,8 @@
+{
+  "name": "swarm",
+  "description": "Manager-orchestrated multi-agent swarm — AutoGen-style Claude+Codex orchestration with tmux/cmux/headless support and pluggable agent registry",
+  "version": "1.0.0",
+  "author": {
+    "name": "Luke Lee"
+  }
+}
