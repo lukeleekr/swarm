@@ -639,14 +639,14 @@ swarm_check_result_status() {
     return 0
   fi
   local status_line
-  status_line=$(grep -m1 '^Status:' "${result_file}" 2>/dev/null || echo "")
+  status_line=$(grep -im1 '^Status:' "${result_file}" 2>/dev/null || echo "")
   if [[ -z "${status_line}" ]]; then
     echo "MALFORMED"
     return 0
   fi
   if echo "${status_line}" | grep -qi "DONE"; then
     # Validate required fields for DONE
-    if ! grep -q '^Files Changed:' "${result_file}" 2>/dev/null; then
+    if ! grep -iq '^Files Changed:' "${result_file}" 2>/dev/null; then
       echo "INCOMPLETE"
       return 0
     fi
@@ -659,13 +659,15 @@ swarm_check_result_status() {
 }
 
 swarm_get_acceptance_criteria() {
-  # Extract acceptance criteria from a task file (handles indented bullets too).
+  # Extract acceptance criteria from a task file (handles indented bullets).
+  # Uses flag-based parsing (awk range breaks on macOS when start matches end).
   local task_file="$1"
   [[ -f "${task_file}" ]] || return 0
-  awk '/^## Acceptance Criteria/,/^##/ {
-    if (/^## Acceptance/ || /^##/) next
-    if (/^[[:space:]]*-/) print
-  }' "${task_file}" 2>/dev/null
+  awk '
+    /^## Acceptance Criteria/ { capture=1; next }
+    /^## / && capture { capture=0 }
+    capture && /^[[:space:]]*-/ { print }
+  ' "${task_file}" 2>/dev/null
 }
 
 swarm_get_files_changed() {
