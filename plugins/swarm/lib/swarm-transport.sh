@@ -292,14 +292,13 @@ swarm_find_stale_sessions() {
   local swarm_dir="${project_dir}/.swarm"
   [[ -d "${swarm_dir}" ]] || return 0
   local stale=()
-  for ledger in "${swarm_dir}"/*/ledger.yaml; do
-    [[ -f "${ledger}" ]] || continue
+  while IFS= read -r ledger; do
     local phase
     phase=$(grep '^phase:' "${ledger}" | awk '{print $2}')
     if [[ "${phase}" != "done" ]]; then
       stale+=("$(dirname "${ledger}")")
     fi
-  done
+  done < <(find "${swarm_dir}" -maxdepth 2 -name "ledger.yaml" 2>/dev/null)
   if (( ${#stale[@]} > 0 )); then
     printf '%s\n' "${stale[@]}"
   fi
@@ -509,8 +508,7 @@ swarm_find_interrupted_sessions() {
   local project_dir="${1:-.}"
   local swarm_dir="${project_dir}/.swarm"
   [[ -d "${swarm_dir}" ]] || return 0
-  for ledger in "${swarm_dir}"/*/ledger.yaml; do
-    [[ -f "${ledger}" ]] || continue
+  while IFS= read -r ledger; do
     local session_dir
     session_dir=$(dirname "${ledger}")
     local phase
@@ -522,7 +520,7 @@ swarm_find_interrupted_sessions() {
         echo "${session_dir}"
       fi
     fi
-  done
+  done < <(find "${swarm_dir}" -maxdepth 2 -name "ledger.yaml" 2>/dev/null)
 }
 
 swarm_get_completed_tasks() {
