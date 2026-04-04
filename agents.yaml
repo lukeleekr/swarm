@@ -20,7 +20,7 @@ agents:
   codex:
     # Uses ~/.codex/config.toml defaults: model=gpt-5.4, reasoning=high, approval=never, sandbox=danger-full-access
     command_exec: "codex exec"
-    command_interactive: "codex --full-auto"
+    command_interactive: "codex --full-auto -a never"
     roles: [coder]
     capabilities: [implement, debug]
     init_prompt: |

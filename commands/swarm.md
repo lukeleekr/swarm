@@ -436,13 +436,8 @@ This runs as a Claude Code subagent — no pane, no visual feedback. Last resort
 
 **For simple tasks (two-agent loop):**
 - Skip task file creation and wave grouping
-- Claude (orchestrator) implements directly
-- Cross-review per Phase 4 rules:
-  - If coder = Claude → review via Codex:
-    ```bash
-    codex exec "Review the changes in $(git diff --stat). Focus on correctness, edge cases, security. Write findings to ${SESSION_DIR}/reviews/review-001.result. Start with 'Status: DONE' or 'Status: NEEDS_REVISION'."
-    ```
-  - If coder = Codex → review via `Skill("superpowers:requesting-code-review")`
+- Claude (orchestrator) implements directly — spawning an external agent for trivial fixes is overkill
+- Cross-review: spawn Codex in a CMUX pane to review Claude's changes
 - Before each retry: `swarm_clear_result` on the review file
 - Iterate if NEEDS_REVISION (max 3 rounds)
 

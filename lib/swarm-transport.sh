@@ -163,11 +163,18 @@ swarm_wait_agent_ready() {
   local elapsed=0
   while (( elapsed < timeout )); do
     local screen
-    screen=$(cmux read-screen --surface "${pane_id}" --lines 10 2>/dev/null || echo "")
+    case "${mux}" in
+      cmux) screen=$(cmux read-screen --surface "${pane_id}" --lines 10 2>/dev/null || echo "") ;;
+      tmux) screen=$(tmux capture-pane -t "${pane_id}" -p -l 10 2>/dev/null || echo "") ;;
+      *)    return 0 ;;
+    esac
 
     # Detect trust/folder prompts and auto-accept by pressing Enter
     if echo "${screen}" | grep -qiE 'trust.*(folder|directory|contents)|Do you trust'; then
-      cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
+      case "${mux}" in
+        cmux) cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true ;;
+        tmux) tmux send-keys -t "${pane_id}" Enter 2>/dev/null || true ;;
+      esac
       sleep 3
       elapsed=$((elapsed + 3))
       continue
@@ -407,10 +414,10 @@ swarm_find_stale_sessions() {
 
 swarm_ensure_gitignore() {
   local project_dir="${1:-.}"
-  if [[ -f "${project_dir}/.gitignore" ]]; then
-    if ! grep -q '.swarm/' "${project_dir}/.gitignore" 2>/dev/null; then
-      echo '.swarm/' >> "${project_dir}/.gitignore"
-    fi
+  # Only act inside git repos
+  git -C "${project_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  if ! grep -q '.swarm/' "${project_dir}/.gitignore" 2>/dev/null; then
+    echo '.swarm/' >> "${project_dir}/.gitignore"
   fi
 }
 
@@ -807,7 +814,7 @@ swarm_get_files_changed() {
       # Handle inline list: "Files Changed: [foo.py, bar.py]"
       local inline
       inline=$(echo "${line}" | sed 's/^Files Changed:[[:space:]]*//' | tr -d '[]' | tr ',' '\n')
-      echo "${inline}" | while IFS= read -r f; do
+      while IFS= read -r f; do
         f=$(echo "${f}" | xargs)  # trim whitespace
         if [[ -n "${f}" ]]; then
           if [[ ! -f "${f}" ]]; then
@@ -815,7 +822,7 @@ swarm_get_files_changed() {
           fi
           echo "${f}"
         fi
-      done
+      done <<< "${inline}"
       continue
     fi
     if [[ "${in_section}" == true ]]; then
