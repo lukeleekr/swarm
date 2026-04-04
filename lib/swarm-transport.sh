@@ -89,6 +89,8 @@ swarm_spawn_agent() {
   local command="$2"
   local workdir="$3"
   local session_dir="$4"
+  local split_dir="${5:-right}"    # right or down
+  local split_from="${6:-}"        # surface to split from (optional)
   local mux
   mux="$(swarm_detect_mux)"
 
@@ -96,7 +98,11 @@ swarm_spawn_agent() {
   case "${mux}" in
     cmux)
       local output
-      output=$(cmux new-split right 2>/dev/null || echo "")
+      if [[ -n "${split_from}" ]]; then
+        output=$(cmux new-split "${split_dir}" --surface "${split_from}" 2>/dev/null || echo "")
+      else
+        output=$(cmux new-split "${split_dir}" 2>/dev/null || echo "")
+      fi
       pane_id=$(echo "${output}" | grep -o 'surface:[0-9]*' | head -1)
       if [[ -n "${pane_id}" ]]; then
         cmux send --surface "${pane_id}" "cd '${workdir}' && ${command}" >/dev/null 2>&1
