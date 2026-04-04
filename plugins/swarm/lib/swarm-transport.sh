@@ -132,6 +132,10 @@ swarm_kill_agent() {
   case "${mux}" in
     cmux)
       if [[ "${pane_id}" == surface:* ]]; then
+        # Gracefully exit interactive sessions (claude/codex) before closing
+        cmux send --surface "${pane_id}" "/exit" 2>/dev/null || true
+        cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
+        sleep 2
         cmux close-surface --surface "${pane_id}" 2>/dev/null || true
       fi
       ;;
