@@ -351,21 +351,28 @@ For each wave W (1, 2, ... WAVE_COUNT):
 
      **REVISE flow (max 2 rounds per task):**
      ```bash
-     if swarm_can_revise "${SESSION_DIR}" "task-NNN"; then
-       REV_COUNT=$(swarm_get_revision_count "${SESSION_DIR}" "task-NNN")
-       NEXT_REV=$(( REV_COUNT + 1 ))
+     # Loop until accepted or max revisions exhausted
+     while swarm_can_revise "${SESSION_DIR}" "task-NNN"; do
+       NEXT_REV=$(swarm_next_revision_num "${SESSION_DIR}" "task-NNN")
        REV_FILE=$(swarm_write_revision_task "${SESSION_DIR}" "task-NNN" "${NEXT_REV}" \
-         "$(echo "ISSUES_DESCRIPTION")" "$(echo "${CRITERIA}")")
+         "${ISSUES_DESCRIPTION}")
        # Dispatch revision to the SAME agent pane
-       swarm_pipe_prompt "${AGENT_PANE}" "Read and fix: ${REV_FILE}"
+       swarm_pipe_prompt "${AGENT_PANE}" "Read and fix the issues in: ${REV_FILE}"
        # Poll for revision result
        swarm_poll_result "${REV_FILE}" 300
-       # Re-evaluate (recursive — same Step A-E on the revision result)
-     else
-       # Max revisions reached — escalate
-       echo "Task NNN failed quality gate after 2 revisions."
-     fi
+       # Re-evaluate: run Steps A-E on the REVISION result
+       STATUS=$(swarm_check_result_status "${REV_FILE%.md}.result")
+       [[ "${STATUS}" == "DONE" ]] || continue
+       # Read changed files, re-check criteria — if all pass, break
+       # If criteria still fail, loop continues with new ISSUES_DESCRIPTION
+       break  # or continue if criteria still fail
+     done
+     # If loop exhausted: escalate to user
      ```
+
+     **The revision task includes the FULL original task** (not just criteria).
+     `swarm_write_revision_task` embeds the entire original task-NNN.md content
+     so the agent has full context for the fix.
 
      **What "ISSUES_DESCRIPTION" must contain (non-negotiable):**
      - Which acceptance criterion failed and why
@@ -373,7 +380,9 @@ For each wave W (1, 2, ... WAVE_COUNT):
      - What the code does vs what it should do
      - Concrete fix instruction (not vague "improve error handling")
 
-     If you cannot identify specific issues, the task PASSES — do not revise on vague feelings.
+     **Validation:** If you cannot point to a specific file:line with a concrete
+     problem, the task PASSES. Do not revise on vague feelings. "Could be better"
+     is not an issue. "Line 15 catches Exception instead of ValueError" is.
 
   5. Update progress:
      swarm_update_ledger_field "${SESSION_DIR}" "tasks_done" "N"

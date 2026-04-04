@@ -615,20 +615,24 @@ swarm_classify_task() {
 # ── Self-Corrective Loop ─────────────────────────────────────────
 
 swarm_get_revision_count() {
-  # How many revisions have been attempted for a task?
-  # Usage: COUNT=$(swarm_get_revision_count "${SESSION_DIR}" "task-001")
+  # Return the highest revision number for a task (0 if none).
+  # Uses find to avoid zsh glob issues.
   local session_dir="$1"
   local task_id="$2"
-  local count=0
-  for rev in "${session_dir}/tasks/${task_id}-rev"*.md; do
-    [[ -f "${rev}" ]] && (( count++ ))
-  done
-  echo "${count}"
+  local max=0
+  while IFS= read -r rev_file; do
+    local num
+    num=$(basename "${rev_file}" .md | sed "s/.*-rev//")
+    if [[ "${num}" =~ ^[0-9]+$ ]] && (( num > max )); then
+      max="${num}"
+    fi
+  done < <(find "${session_dir}/tasks" -name "${task_id}-rev*.md" -type f 2>/dev/null)
+  echo "${max}"
 }
 
 swarm_check_result_status() {
-  # Parse a .result file and return: DONE, FAILED, or MISSING
-  # Usage: STATUS=$(swarm_check_result_status "/path/to/task-001.result")
+  # Parse a .result file. Returns: DONE, FAILED, MISSING, MALFORMED, or INCOMPLETE.
+  # DONE requires Status: DONE + Files Changed field present.
   local result_file="$1"
   if [[ ! -f "${result_file}" ]]; then
     echo "MISSING"
@@ -636,7 +640,16 @@ swarm_check_result_status() {
   fi
   local status_line
   status_line=$(grep -m1 '^Status:' "${result_file}" 2>/dev/null || echo "")
+  if [[ -z "${status_line}" ]]; then
+    echo "MALFORMED"
+    return 0
+  fi
   if echo "${status_line}" | grep -qi "DONE"; then
+    # Validate required fields for DONE
+    if ! grep -q '^Files Changed:' "${result_file}" 2>/dev/null; then
+      echo "INCOMPLETE"
+      return 0
+    fi
     echo "DONE"
   elif echo "${status_line}" | grep -qi "FAILED"; then
     echo "FAILED"
@@ -646,49 +659,79 @@ swarm_check_result_status() {
 }
 
 swarm_get_acceptance_criteria() {
-  # Extract acceptance criteria from a task file as a checklist
-  # Usage: CRITERIA=$(swarm_get_acceptance_criteria "/path/to/task-001.md")
+  # Extract acceptance criteria from a task file (handles indented bullets too).
   local task_file="$1"
-  sed -n '/^## Acceptance Criteria/,/^##/p' "${task_file}" 2>/dev/null | grep '^- ' || echo ""
+  [[ -f "${task_file}" ]] || return 0
+  awk '/^## Acceptance Criteria/,/^##/ {
+    if (/^## Acceptance/ || /^##/) next
+    if (/^[[:space:]]*-/) print
+  }' "${task_file}" 2>/dev/null
 }
 
 swarm_get_files_changed() {
-  # Extract files changed from a .result file
-  # Usage: FILES=$(swarm_get_files_changed "/path/to/task-001.result")
+  # Extract file paths from a .result file's "Files Changed:" section.
+  # Parses "- path/to/file" lines, validates each file exists.
   local result_file="$1"
-  grep -A20 '^Files Changed:' "${result_file}" 2>/dev/null | grep -oE '\S+\.\w+' | head -20 || echo ""
+  [[ -f "${result_file}" ]] || return 0
+  local in_section=false
+  while IFS= read -r line; do
+    if [[ "${line}" =~ ^Files\ Changed: ]]; then
+      in_section=true
+      # Handle inline list: "Files Changed: [foo.py, bar.py]"
+      local inline
+      inline=$(echo "${line}" | sed 's/^Files Changed:[[:space:]]*//' | tr -d '[]' | tr ',' '\n')
+      echo "${inline}" | while IFS= read -r f; do
+        f=$(echo "${f}" | xargs)  # trim whitespace
+        [[ -n "${f}" ]] && echo "${f}"
+      done
+      continue
+    fi
+    if [[ "${in_section}" == true ]]; then
+      # Stop at next section header
+      [[ "${line}" =~ ^[A-Z] ]] && break
+      # Parse "- path/to/file" or "path/to/file"
+      local filepath
+      filepath=$(echo "${line}" | sed 's/^[[:space:]]*-[[:space:]]*//' | sed 's/[[:space:]]*(.*//' | xargs)
+      [[ -n "${filepath}" && "${filepath}" != "-" ]] && echo "${filepath}"
+    fi
+  done < "${result_file}"
 }
 
 swarm_write_revision_task() {
-  # Create a revision task file with specific feedback
-  # Usage: swarm_write_revision_task "${SESSION_DIR}" "task-001" "1" "issues..." "criteria..."
+  # Create a revision task with FULL original context + specific issues.
   local session_dir="$1"
   local task_id="$2"
   local rev_num="$3"
   local issues="$4"
-  local criteria="$5"
   local original_task="${session_dir}/tasks/${task_id}.md"
   local rev_file="${session_dir}/tasks/${task_id}-rev${rev_num}.md"
-  local title
-  title=$(head -1 "${original_task}" 2>/dev/null | sed 's/^# //')
+
+  if [[ ! -f "${original_task}" ]]; then
+    echo "ERROR: Original task not found: ${original_task}" >&2
+    return 1
+  fi
+
+  local original_content
+  original_content=$(cat "${original_task}")
 
   cat > "${rev_file}" << REVEOF
-# Revision ${rev_num} for ${task_id}: ${title}
+# Revision ${rev_num} for ${task_id}
 
-## Original Acceptance Criteria
-${criteria}
+## Original Task (Full Context)
+${original_content}
 
-## Issues Found
+## Previous Evaluation — Issues Found
 ${issues}
 
 ## Required Changes
-Fix the issues listed above. All original acceptance criteria must pass.
+Fix ALL issues listed above. Every acceptance criterion from the original task must pass.
 
 ## Instructions
 Write your result to: ${session_dir}/tasks/${task_id}-rev${rev_num}.result
 Format:
 - Status: DONE | FAILED
-- Files Changed: [list]
+- Files Changed:
+  - [list each file on its own line]
 - Summary: [what you fixed]
 - Issues: [any remaining problems]
 REVEOF
@@ -697,11 +740,19 @@ REVEOF
 }
 
 swarm_can_revise() {
-  # Check if more revisions are allowed (max 2)
-  # Usage: if swarm_can_revise "${SESSION_DIR}" "task-001"; then ...
+  # Check if more revisions are allowed (max 2).
   local session_dir="$1"
   local task_id="$2"
   local count
   count=$(swarm_get_revision_count "${session_dir}" "${task_id}")
   (( count < 2 ))
+}
+
+swarm_next_revision_num() {
+  # Return the next safe revision number (avoids overwrites).
+  local session_dir="$1"
+  local task_id="$2"
+  local max
+  max=$(swarm_get_revision_count "${session_dir}" "${task_id}")
+  echo $(( max + 1 ))
 }
