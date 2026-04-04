@@ -38,9 +38,12 @@ mux: ${mux}
 tasks_total: 0
 tasks_done: 0
 wave_count: 0
+current_wave: 0
 regression_gate: null
 verification_state: null
 gap_closure_round: 0
+tasks_completed: []
+resumed_from: null
 created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 agents: []
@@ -497,4 +500,38 @@ swarm_check_regression() {
   fi
 
   return 0
+}
+
+# ── Session Resume ───────────────────────────────────────────────
+
+swarm_find_interrupted_sessions() {
+  # Like swarm_find_stale_sessions but requires partial progress (.result files)
+  local project_dir="${1:-.}"
+  local swarm_dir="${project_dir}/.swarm"
+  [[ -d "${swarm_dir}" ]] || return 0
+  for ledger in "${swarm_dir}"/*/ledger.yaml; do
+    [[ -f "${ledger}" ]] || continue
+    local session_dir
+    session_dir=$(dirname "${ledger}")
+    local phase
+    phase=$(grep '^phase:' "${ledger}" | awk '{print $2}')
+    if [[ "${phase}" != "done" ]]; then
+      local results
+      results=$(find "${session_dir}/tasks" -name "*.result" 2>/dev/null | wc -l | tr -d ' ')
+      if (( results > 0 )); then
+        echo "${session_dir}"
+      fi
+    fi
+  done
+}
+
+swarm_get_completed_tasks() {
+  # Read all .result files, return task IDs that have Status: DONE
+  local session_dir="$1"
+  for result in "${session_dir}"/tasks/*.result; do
+    [[ -f "${result}" ]] || continue
+    if grep -q '^Status: DONE' "${result}"; then
+      basename "${result}" .result
+    fi
+  done
 }

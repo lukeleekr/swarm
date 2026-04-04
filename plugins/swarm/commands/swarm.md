@@ -1,15 +1,16 @@
 ---
 description: "Manager-orchestrated multi-agent swarm — auto-routes simple tasks to 2-agent loop, complex tasks to full pipeline"
-argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequential]"
+argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequential] [--resume] [--skip-discuss]"
 ---
 
 # /swarm — Multi-Agent Orchestration
 
 > **allowed-tools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Agent`, `TaskCreate`, `TaskUpdate`, `TaskList`, `Skill`, `AskUserQuestion`
 
-<!-- Phase Flow (V2):
-  Phase 0: Init (mux detect, stale cleanup, registry, session)
+<!-- Phase Flow (V2 complete):
+  Phase 0: Init (mux detect, interrupted/stale detection, --resume, registry, session)
   Phase 1: Context detection + complexity classification
+  Phase 1.5: PRE-EXECUTION DISCUSS (grey area batch table, --skip-discuss to bypass)
   Phase 2: Plan decomposition + WAVE GROUPING (dependency graph, cycle detection)
   Phase 3: Wave dispatch (parallel within wave, sequential across waves)
            └─ Between waves: REGRESSION CHECK (JUnit XML identity comparison)
@@ -30,6 +31,8 @@ Parse `$ARGUMENTS`:
 - `--agents <names>` → comma-separated agent names from registry (default: auto from role_priority)
 - `--dry-run` → show plan + team composition without executing
 - `--sequential` → force strict task-by-task ordering (disable wave parallelism)
+- `--resume` → resume interrupted session instead of starting fresh
+- `--skip-discuss` → skip Phase 1.5 grey area extraction
 - Everything else → task description
 
 ## Phase 0: Prerequisites & Init
@@ -51,14 +54,28 @@ Report to user:
 - `tmux` → "Running in tmux — visual panes enabled"
 - `none` → "No multiplexer detected — agents will run as background processes"
 
-### 0.3 Check for Stale Sessions
+### 0.3 Check for Interrupted / Stale Sessions
 
 ```bash
+INTERRUPTED=$(swarm_find_interrupted_sessions "$(pwd)")
 STALE=$(swarm_find_stale_sessions "$(pwd)")
 ```
 
-If stale sessions found, ask user: "Found N stale swarm sessions. Clean up orphan panes? [Y/n]"
-If yes, call `swarm_cleanup` on each stale session directory.
+**If `--resume` AND interrupted session found:**
+- Read the interrupted session's ledger and completed task results
+- Present summary: "Found interrupted session [ID]. N of M tasks complete. Resume from wave W?"
+- On user approval: reuse that session (set `SESSION_DIR` to it), skip to Phase 3 with only remaining tasks
+- On user decline: proceed to fresh session
+
+**If `--resume` but no interrupted session:**
+- Warn: "No interrupted sessions found. Starting fresh."
+
+**If no `--resume` but interrupted session exists:**
+- Ask: "Found interrupted session [ID]. Resume it, or start fresh?"
+
+**If stale sessions found (no progress):**
+- Ask: "Found N stale swarm sessions. Clean up orphan panes? [Y/n]"
+- If yes, call `swarm_cleanup` on each stale session directory.
 
 ### 0.4 Read Agent Registry
 
@@ -110,6 +127,45 @@ Search for:
 
 State your classification to the user and let them override.
 
+## Phase 1.5: Pre-Execution Discuss (Grey Areas)
+
+**Skip this phase when:** simple task (two-agent loop), `--skip-discuss` flag, or manager judges the plan has no ambiguous decisions.
+
+After reading the plan (Phase 1.1) and before writing task files (Phase 2):
+
+### 1.5.1 Scan for grey areas
+
+Read the plan and identify decisions that are ambiguous or could go multiple ways:
+- Technology choices ("use X or Y?")
+- Data format decisions ("JSON vs YAML?", "REST vs GraphQL?")
+- Scope boundaries ("include error handling for X?")
+- Architecture decisions ("single file vs split?")
+- Naming conventions unclear from spec
+
+### 1.5.2 Present as batch table
+
+Instead of asking one-by-one (slow), present 3-5 grey areas with recommendations:
+
+```markdown
+## Pre-Execution Decisions
+
+| # | Grey Area | Recommendation | Alternative |
+|---|-----------|---------------|-------------|
+| 1 | Auth approach | JWT tokens | Session cookies |
+| 2 | Config format | YAML (matches existing) | JSON |
+| 3 | Error response shape | `{error, code, detail}` | `{message, status}` |
+
+Accept all, or specify which to change?
+```
+
+### 1.5.3 Embed decisions
+
+User responds: accept all (fast path) or override specific items.
+
+Store resolved decisions for embedding into task files in Phase 2. Each task file will include a `## Decisions` section with grey areas relevant to that task.
+
+If no grey areas found → skip silently, proceed to Phase 2.
+
 ## Phase 2: Plan Decomposition
 
 Read the implementation plan and decompose into task files.
@@ -131,6 +187,9 @@ For each logical work unit in the plan:
 
    ## Files to Touch
    - [list of files this task will read or write]
+
+   ## Decisions
+   - [resolved grey areas from Phase 1.5, relevant to this task]
 
    ## Assignment
    [detailed description of what to implement]
@@ -454,3 +513,7 @@ swarm_log "success" "Swarm complete — ${TASKS_DONE} tasks executed"
 | Gap closure introduces regression | Include in escalation diagnosis |
 | Tests fail after gap closure | Escalate to user with full diagnosis |
 | Stale session found on init | Offer cleanup |
+| Interrupted session found | Offer resume (or auto-resume with `--resume`) |
+| `--resume` but no interrupted session | Warn and start fresh |
+| Grey areas found in plan | Present batch table, embed decisions in tasks |
+| No grey areas in plan | Skip Phase 1.5 silently |
