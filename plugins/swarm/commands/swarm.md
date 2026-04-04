@@ -1,6 +1,6 @@
 ---
 description: "Manager-orchestrated multi-agent swarm — auto-routes simple tasks to 2-agent loop, complex tasks to full pipeline"
-argument-hint: "<task> [--keep-panes] [--agents <names>] [--dry-run] [--sequential] [--resume] [--skip-discuss] [--review-agents N]"
+argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents N|opus] [--dry-run] [--sequential] [--resume] [--skip-discuss]"
 ---
 
 # /swarm — Multi-Agent Orchestration
@@ -36,6 +36,8 @@ Parse `$ARGUMENTS`:
 - `--resume` → resume interrupted session instead of starting fresh
 - `--skip-discuss` → skip Phase 1.5 grey area extraction and Phase 2.5 plan review
 - `--review-agents N` → force exactly N parallel Codex reviewers for plan review (1-4, default: auto)
+- `--review-agents opus` → Opus reviews its own plan via SDD subagents (fast, no pane overhead)
+- `--review-agents N:opus` → N parallel Opus SDD subagent reviewers
 - Everything else → task description
 
 ## Phase 0: Prerequisites & Init
@@ -256,9 +258,9 @@ swarm_set_progress "Planning" "0.15"
 
 Opus wrote the plan — Codex reviews it before execution begins. Cross-review principle: the planner never reviews their own plan.
 
-### 2.5.1 Determine reviewer count
+### 2.5.1 Determine reviewer count and model
 
-Smart routing — Opus decides how many parallel Codex reviewers to spawn based on plan complexity:
+Smart routing — Opus decides how many parallel reviewers to spawn based on plan complexity:
 
 | Plan Size | Default Reviewers | Focus |
 |-----------|------------------|-------|
@@ -266,39 +268,53 @@ Smart routing — Opus decides how many parallel Codex reviewers to spawn based 
 | 4-8 tasks, 2+ waves | 2 | Feasibility + dependency/risk |
 | 9+ tasks or 3+ waves | 3 | Feasibility + dependency + scope/security |
 
-**Manual override:** `--review-agents N` flag forces exactly N parallel reviewers (min 1, max 4). Example: `/swarm --review-agents 3 Build the API`.
+**Manual overrides:**
+
+| Flag | Behavior |
+|------|----------|
+| `--review-agents 3` | 3 parallel Codex pane reviewers |
+| `--review-agents opus` | 1 Opus SDD subagent reviewer (fast, no pane) |
+| `--review-agents 2:opus` | 2 parallel Opus SDD subagent reviewers |
+
+**Default:** Codex in CMUX panes (cross-model review: Opus planned → Codex reviews).
+**When to use Opus:** Quick self-check before spawning panes, or when Codex is unavailable.
 
 Each reviewer gets a **different focus prompt** to avoid redundant feedback:
 
 | Reviewer | Focus |
 |----------|-------|
-| Codex-Feasibility | Can each task be implemented as described? Missing deps? |
-| Codex-Risk | Security, performance, correctness risks? Edge cases? |
-| Codex-Scope | Unnecessary work? Gold-plating? Simpler alternatives? |
-| Codex-Architecture | Cross-task consistency? Integration points sound? |
+| Feasibility | Can each task be implemented as described? Missing deps? |
+| Risk | Security, performance, correctness risks? Edge cases? |
+| Scope | Unnecessary work? Gold-plating? Simpler alternatives? |
+| Architecture | Cross-task consistency? Integration points sound? |
 
 ### 2.5.2 Spawn parallel reviewers
 
-Spawn N Codex agents in CMUX panes using grid layout:
+**Codex reviewers (default)** — spawn in CMUX panes using grid layout:
 
 ```bash
-# Example: 2 reviewers
+# Example: 2 Codex reviewers
 PANE1=$(swarm_spawn_agent "Codex-Feasibility" "codex" "$(pwd)" "${SESSION_DIR}" "right")
 PANE2=$(swarm_spawn_agent "Codex-Risk" "codex" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
-
-swarm_register_agent "${SESSION_DIR}" "Codex-Feasibility" "${PANE1}" "reviewer"
-swarm_register_agent "${SESSION_DIR}" "Codex-Risk" "${PANE2}" "reviewer"
-
 swarm_wait_agent_ready "${PANE1}" 30
 swarm_wait_agent_ready "${PANE2}" 30
+swarm_pipe_prompt "${PANE1}" "Review plan in ${SESSION_DIR}/tasks/. Focus: FEASIBILITY. ..."
+swarm_pipe_prompt "${PANE2}" "Review plan in ${SESSION_DIR}/tasks/. Focus: RISKS. ..."
+```
 
-swarm_pipe_prompt "${PANE1}" "Review plan in ${SESSION_DIR}/tasks/. Focus: FEASIBILITY. [prompt]"
-swarm_pipe_prompt "${PANE2}" "Review plan in ${SESSION_DIR}/tasks/. Focus: RISKS. [prompt]"
+**Opus reviewers (`--review-agents opus`)** — dispatch SDD subagents (no panes):
+
+```
+# Example: 2 Opus reviewers (parallel Agent calls in single message)
+Agent(subagent_type="general-purpose", name="Opus-Feasibility",
+  prompt="Review plan at ${SESSION_DIR}/tasks/. Focus: FEASIBILITY. ...")
+Agent(subagent_type="general-purpose", name="Opus-Risk",
+  prompt="Review plan at ${SESSION_DIR}/tasks/. Focus: RISKS. ...")
 ```
 
 Each reviewer writes to `${SESSION_DIR}/reviews/plan-review-{focus}.result` with `Status: APPROVED` or `Status: NEEDS_REVISION`.
 
-Poll all results in parallel.
+Poll all results in parallel (pane: `swarm_poll_result`; subagent: results returned inline).
 
 ### 2.5.3 Orchestrator consolidates reviews
 
