@@ -111,13 +111,25 @@ Search for:
 1. `docs/superpowers/specs/*-design.md` — recent design specs
 2. `docs/superpowers/plans/*-plan.md` OR `.plans/*.md` — implementation plans
 
+### 1.1.1 Parallel Context Gathering (complex tasks only)
+
+Before invoking brainstorming for complex tasks, dispatch up to 3 parallel SDD exploration subagents to accelerate context gathering:
+
+```
+Agent(subagent_type="Explore", name="arch-scan", prompt="Scan codebase architecture: directory structure, key modules, tech stack, entry points")
+Agent(subagent_type="Explore", name="pattern-scan", prompt="Find similar patterns for [task description]: analogous implementations, conventions, reusable utilities")
+Agent(subagent_type="Explore", name="test-scan", prompt="Identify test patterns: framework, fixture conventions, coverage areas, how to verify [task description]")
+```
+
+Feed findings into brainstorming/planning. Skip for simple tasks.
+
 ### 1.2 Route Based on Context
 
 | Found | Action |
 |-------|--------|
 | Spec + plan | Read plan, decompose into work units → Phase 2 |
 | Spec only | Invoke `Skill("superpowers:writing-plans")` → then Phase 2 |
-| Nothing + complex task | Invoke `Skill("superpowers:brainstorming")` → then writing-plans → then Phase 2 |
+| Nothing + complex task | Run 1.1.1 parallel research → `Skill("superpowers:brainstorming")` → writing-plans → Phase 2 |
 | Nothing + simple task | Skip to Phase 3 (two-agent loop) |
 
 ### 1.3 Complexity Heuristic
@@ -292,6 +304,23 @@ For exec mode: model is set per-task invocation.
 swarm_set_progress "Executing" "0.25"
 ```
 
+**Codex internal SDD:** When Codex is the coder in a pane, it has access to the full Superpowers skill set (`~/.codex/skills/`), including SDD, TDD, and code-review. Codex manages its own internal subagent dispatch via `multi_agent = true` (max 6 threads: explorer, reviewer, docs_researcher, worker). The orchestrator does not need to manage Codex's internal parallelism — just dispatch the task and poll for the result.
+
+### 3.2.1 Dispatch Method Selection
+
+For each task, choose the dispatch method. The orchestrator uses whichever is appropriate — not one-size-fits-all.
+
+| Condition | Method | Why |
+|-----------|--------|-----|
+| `--agents codex/gemini` (explicit) | **Pane** | Cross-model requires CLI pane |
+| Complex task (opus-level) | **Pane** | Visual feedback for long-running work |
+| Simple/standard + same model (no `--agents` flag) | **SDD subagent** | Faster, no startup overhead |
+| MUX=none + no external CLI | **SDD subagent** | Only option available |
+
+**Pane dispatch:** Use `swarm_spawn_agent` → `swarm_pipe_prompt` → `swarm_poll_result` (transport lib).
+
+**SDD subagent dispatch:** Use `Agent` tool with the SDD implementer-prompt template. Subagent reports status (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT) and writes to the same `.result` file format.
+
 ### 3.3 Wave Dispatch Loop
 
 Group tasks by wave number. Execute waves sequentially; within each wave, dispatch tasks in parallel.
@@ -434,10 +463,15 @@ This runs as a Claude Code subagent — no pane, no visual feedback. Last resort
 
 ### 3.5 Simple Task Path (two-agent loop)
 
-**For simple tasks (two-agent loop):**
+**For simple tasks:**
 - Skip task file creation and wave grouping
-- Claude (orchestrator) implements directly — spawning an external agent for trivial fixes is overkill
-- Cross-review: spawn Codex in a CMUX pane to review Claude's changes
+- Select coder based on dispatch method (3.2.1):
+  - If `--agents codex` forced → spawn Codex in pane, Opus reviews
+  - Otherwise → Claude implements directly or via SDD subagent (follows implementer-prompt.md template)
+    - SDD subagent reports: DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT
+    - Handle NEEDS_CONTEXT by providing info and re-dispatching
+    - Handle BLOCKED by escalating to user
+- Cross-review: spawn Codex in a CMUX pane to review (coder=Claude) or Opus reviews via two-stage SDD (coder=Codex, see 4.3b)
 - Before each retry: `swarm_clear_result` on the review file
 - Iterate if NEEDS_REVISION (max 3 rounds)
 
@@ -487,15 +521,29 @@ Format: Status: DONE or Status: NEEDS_REVISION, then Strengths, Issues (Critical
 
 Poll for `review-final.result`.
 
-### 4.3b Claude Opus reviews (when coder was Codex)
+### 4.3b Claude Opus reviews (when coder was Codex) — Two-Stage SDD Review
 
-Invoke the superpowers code review skill:
+**Stage 1 — Spec compliance** (run first):
+
+Dispatch a subagent using the SDD spec-reviewer-prompt template:
 
 ```
-Skill("superpowers:requesting-code-review")
+Agent(
+  subagent_type="superpowers:code-reviewer",
+  prompt="[spec-reviewer-prompt.md template filled with:
+    - FULL TEXT of task acceptance criteria
+    - Implementer's result report
+    - Instructions: Read actual code, do NOT trust the report.
+      Compare implementation to each criterion line by line.
+      Output: ✅ compliant or ❌ issues with file:line references]"
+)
 ```
 
-Fill the code-reviewer template with:
+If spec review finds issues → route back to coder for fixes (Phase 4.4). Do NOT proceed to Stage 2.
+
+**Stage 2 — Code quality** (only if Stage 1 passes):
+
+Invoke `Skill("superpowers:requesting-code-review")` with:
 - `{WHAT_WAS_IMPLEMENTED}`: aggregated task summaries
 - `{PLAN_OR_REQUIREMENTS}`: original plan/spec or task description
 - `{BASE_SHA}`: pre-swarm commit
@@ -503,6 +551,8 @@ Fill the code-reviewer template with:
 - `{DESCRIPTION}`: swarm session summary
 
 The skill spawns a `superpowers:code-reviewer` subagent that reviews the diff and returns structured feedback (Strengths, Critical/Important/Minor issues, Assessment).
+
+**Why two stages:** Spec compliance is fast and binary (did they build what was asked?). Code quality is deeper (is it well-built?). Running quality review on non-compliant code wastes effort.
 
 ### 4.4 Fix loop
 
