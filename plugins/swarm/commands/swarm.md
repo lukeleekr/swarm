@@ -1,6 +1,6 @@
 ---
 description: "Manager-orchestrated multi-agent swarm — auto-routes simple tasks to 2-agent loop, complex tasks to full pipeline"
-argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents N|opus] [--dry-run] [--sequential] [--resume] [--skip-discuss]"
+argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents [N]] [--dry-run] [--sequential] [--resume] [--skip-discuss]"
 ---
 
 # /swarm — Multi-Agent Orchestration
@@ -8,6 +8,8 @@ argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents N|opus]
 > **allowed-tools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Agent`, `TaskCreate`, `TaskUpdate`, `TaskList`, `Skill`, `AskUserQuestion`
 
 > **HARD RULE — NO MCP TOOLS FOR AGENT DISPATCH**: NEVER use `mcp__codex__codex`, `mcp__gemini__*`, or any MCP server tool to dispatch work to agents. ALL agent interaction MUST go through the transport lib: `swarm_spawn_agent` (spawn in pane), `swarm_pipe_prompt` (send work), `swarm_poll_result` (get results). Using MCP tools bypasses the visual pane orchestration and is a protocol violation.
+
+> **HARD RULE — CROSS-MODEL REVIEW**: The reviewer MUST be a different model family than the author. Claude plans → **Codex reviews** the plan (`--review-agents`). Claude codes → **Codex reviews** the code. Codex codes → **Claude Opus reviews** the code. Same-model review is not independent review. Exception: trivial/simple tasks where the orchestrator handles both inline without a formal review phase.
 
 <!-- Phase Flow (V2 complete):
   Phase 0: Init (mux detect, interrupted/stale detection, --resume, registry, session)
@@ -35,9 +37,7 @@ Parse `$ARGUMENTS`:
 - `--sequential` → force strict task-by-task ordering (disable wave parallelism)
 - `--resume` → resume interrupted session instead of starting fresh
 - `--skip-discuss` → skip Phase 1.5 grey area extraction and Phase 2.5 plan review
-- `--review-agents N` → force exactly N parallel Codex reviewers for plan review (1-4, default: auto)
-- `--review-agents opus` → Opus reviews its own plan via SDD subagents (fast, no pane overhead)
-- `--review-agents N:opus` → N parallel Opus SDD subagent reviewers
+- `--review-agents` or `--review-agents N` → N plan reviewer panes (1 per model family, extras get adversarial role)
 - Everything else → task description
 
 ## Phase 0: Prerequisites & Init
@@ -226,6 +226,12 @@ For each logical work unit in the plan:
    - Files Changed: [list]
    - Summary: [what you did]
    - Issues: [any problems encountered]
+
+   **Conversation protocol — if you need clarification:**
+   Write your question to: [path to task-NNN.question]
+   Then WAIT — do not proceed until [path to task-NNN.answer] appears.
+   Read the answer, then continue your work.
+   You may ask up to 5 questions per task.
    ```
 
 2. After writing ALL task files, run wave grouping:
@@ -256,64 +262,46 @@ swarm_set_progress "Planning" "0.15"
 
 **Skip when:** simple task (two-agent loop), `--skip-discuss` flag, or single-task plan.
 
-Opus wrote the plan — Codex reviews it before execution begins. Cross-review principle: the planner never reviews their own plan.
+> **Hard rule — planner ≠ reviewer:** Claude (Opus) wrote the plan. `--review-agents` always spawns **Codex** panes. No same-model review. If the task is simple enough to skip review, don't pass the flag.
 
-### 2.5.1 Determine reviewer count and model
+### 2.5.1 Determine reviewer count
 
-Smart routing — Opus decides how many parallel reviewers to spawn based on plan complexity:
+**Principle: N reviewers = N distinct model families.** Each reviewer should be a different model to avoid correlated conclusions. Currently 2 families available (Codex/GPT, Claude). When more are added to `agents.yaml` (e.g., DeepSeek), `--review-agents 3+` becomes meaningful.
 
-| Plan Size | Default Reviewers | Focus |
-|-----------|------------------|-------|
-| 1-3 tasks, 1 wave | 1 | General feasibility |
-| 4-8 tasks, 2+ waves | 2 | Feasibility + dependency/risk |
-| 9+ tasks or 3+ waves | 3 | Feasibility + dependency + scope/security |
+| `--review-agents` | What spawns |
+|---|---|
+| `--review-agents` or `--review-agents 1` | 1 Codex pane — cross-model from Claude planner |
+| `--review-agents 2` | 1 Codex standard + 1 Codex **adversarial** (same model, but adversarial framing) |
+| `--review-agents N` (future) | 1 per distinct model family, then adversarial for extras |
 
-**Manual overrides:**
+When N > available model families: assign one reviewer per model family first, then fill extras with adversarial roles on existing models. Same-model reviewers are only useful with adversarial framing.
 
-| Flag | Behavior |
-|------|----------|
-| `--review-agents 3` | 3 parallel Codex pane reviewers |
-| `--review-agents opus` | 1 Opus SDD subagent reviewer (fast, no pane) |
-| `--review-agents 2:opus` | 2 parallel Opus SDD subagent reviewers |
+### 2.5.2 Spawn Codex reviewers
 
-**Default:** Codex in CMUX panes (cross-model review: Opus planned → Codex reviews). The orchestrator may use Claude subagents instead when Codex panes would be overkill (e.g., review-only tasks with no code changes). Use `--review-agents opus` to explicitly request SDD subagents.
-
-Each reviewer gets a **different focus prompt** to avoid redundant feedback:
-
-| Reviewer | Focus |
-|----------|-------|
-| Feasibility | Can each task be implemented as described? Missing deps? |
-| Risk | Security, performance, correctness risks? Edge cases? |
-| Scope | Unnecessary work? Gold-plating? Simpler alternatives? |
-| Architecture | Cross-task consistency? Integration points sound? |
-
-### 2.5.2 Spawn parallel reviewers
-
-**Codex reviewers (default)** — spawn in CMUX panes using grid layout:
+**1 reviewer (default):**
 
 ```bash
-# Example: 2 Codex reviewers
-PANE1=$(swarm_spawn_agent "Codex-Feasibility" "codex" "$(pwd)" "${SESSION_DIR}" "right")
-PANE2=$(swarm_spawn_agent "Codex-Risk" "codex" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
+PANE1=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+swarm_wait_agent_ready "${PANE1}" 30
+swarm_pipe_prompt "${PANE1}" "Read the task files in ${SESSION_DIR}/tasks/ and explore the codebase yourself. Assess feasibility, risks, and completeness. Form your own assessment. Write to ${SESSION_DIR}/reviews/plan-review-standard.result with Status: APPROVED or Status: NEEDS_REVISION, then your findings."
+```
+
+**2 reviewers (with adversarial):**
+
+```bash
+PANE1=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+PANE2=$(swarm_spawn_agent "Codex-Adversarial" "codex" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
 swarm_wait_agent_ready "${PANE1}" 30
 swarm_wait_agent_ready "${PANE2}" 30
-swarm_pipe_prompt "${PANE1}" "Review plan in ${SESSION_DIR}/tasks/. Focus: FEASIBILITY. ..."
-swarm_pipe_prompt "${PANE2}" "Review plan in ${SESSION_DIR}/tasks/. Focus: RISKS. ..."
+swarm_pipe_prompt "${PANE1}" "Read the task files in ${SESSION_DIR}/tasks/ and explore the codebase yourself. Assess feasibility, risks, and completeness. Form your own assessment. Write to ${SESSION_DIR}/reviews/plan-review-standard.result with Status: APPROVED or Status: NEEDS_REVISION, then your findings."
+swarm_pipe_prompt "${PANE2}" "Read the task files in ${SESSION_DIR}/tasks/ and explore the codebase. Your job: argue AGAINST this plan. For each task, ask: Is this necessary? Is there a simpler way? What would you cut? Write to ${SESSION_DIR}/reviews/plan-review-adversarial.result with Status: APPROVED or Status: NEEDS_REVISION, then your findings."
 ```
 
-**Opus reviewers (`--review-agents opus`)** — dispatch SDD subagents (no panes):
+Note: prompts are intentionally **minimal framing** — "explore the codebase yourself" rather than telling the reviewer what to look for. This prevents the orchestrator from shaping conclusions.
 
-```
-# Example: 2 Opus reviewers (parallel Agent calls in single message)
-Agent(subagent_type="general-purpose", name="Opus-Feasibility",
-  prompt="Review plan at ${SESSION_DIR}/tasks/. Focus: FEASIBILITY. ...")
-Agent(subagent_type="general-purpose", name="Opus-Risk",
-  prompt="Review plan at ${SESSION_DIR}/tasks/. Focus: RISKS. ...")
-```
+Each reviewer writes to `${SESSION_DIR}/reviews/plan-review-{role}.result`.
 
-Each reviewer writes to `${SESSION_DIR}/reviews/plan-review-{focus}.result` with `Status: APPROVED` or `Status: NEEDS_REVISION`.
-
-Poll all results in parallel (pane: `swarm_poll_result`; subagent: results returned inline).
+Poll all results: `swarm_poll_result` per reviewer pane.
 
 ### 2.5.3 Orchestrator consolidates reviews
 
@@ -450,8 +438,49 @@ For each wave W (1, 2, ... WAVE_COUNT):
      For Codex agents: codex exec "$(cat ${SESSION_DIR}/tasks/task-NNN.md). Write result to task-NNN.result."
      For other agents: use command_exec from registry.
 
-  3. Poll all results in wave W concurrently:
-     swarm_poll_result "${SESSION_DIR}/tasks/task-NNN.md" 300
+  3. Poll with conversation support (max 5 question turns per task):
+
+     ```bash
+     TASK_FILE="${SESSION_DIR}/tasks/task-NNN.md"
+     TURN=0; MAX_TURNS=5
+
+     while (( TURN < MAX_TURNS )); do
+       EVENT=$(swarm_poll_conversation "${TASK_FILE}" 300)
+
+       case "${EVENT}" in
+         "result")
+           # Agent finished — proceed to evaluation (Step 4)
+           swarm_append_thread "${TASK_FILE}" "agent" "result" "$(swarm_read_result "${TASK_FILE}")"
+           break
+           ;;
+         "question")
+           # Agent needs clarification — read, answer, continue
+           QUESTION=$(cat "${TASK_FILE%.md}.question")
+           swarm_append_thread "${TASK_FILE}" "agent" "question" "${QUESTION}"
+
+           # Orchestrator formulates answer using codebase knowledge
+           # (Read relevant files, check context, answer concretely)
+           ANSWER="[orchestrator answers based on codebase exploration]"
+           swarm_post_answer "${TASK_FILE}" "${ANSWER}" "${AGENT_PANE}"
+
+           TURN=$((TURN + 1))
+           ;;
+         "timeout")
+           # No result or question after 300s — treat as TIMEOUT in Step E
+           break
+           ;;
+       esac
+     done
+
+     # If MAX_TURNS exhausted without .result → escalate to user
+     if (( TURN >= MAX_TURNS )) && ! swarm_check_result "${TASK_FILE}"; then
+       echo "Agent asked ${MAX_TURNS} questions without completing. Escalating."
+       # Escalate — present thread to user for manual intervention
+     fi
+     ```
+
+     The conversation thread (`.thread.jsonl`) preserves full dialogue history
+     for debugging and cross-wave context sharing.
 
   4. Evaluate results for wave W (SELF-CORRECTIVE LOOP):
 
@@ -538,7 +567,19 @@ For each wave W (1, 2, ... WAVE_COUNT):
      swarm_update_ledger_field "${SESSION_DIR}" "tasks_done" "N"
      swarm_set_progress "Wave W — Task N/Total" "0.${progress}"
 
-  6. Between-wave regression check (if wave_count > 1 AND regression_gate == "baseline"):
+  6. Between-wave: propagate discoveries to next wave
+
+     ```bash
+     DISCOVERIES=$(swarm_get_discoveries "${SESSION_DIR}")
+     if [[ -n "${DISCOVERIES}" ]]; then
+       # For each task in the NEXT wave, the orchestrator prepends:
+       # "## Discoveries from Prior Waves\n${DISCOVERIES}"
+       # when composing the dispatch prompt. This shares runtime
+       # context (schema changes, API quirks, etc.) across waves.
+     fi
+     ```
+
+  7. Between-wave regression check (if wave_count > 1 AND regression_gate == "baseline"):
      REGRESSED=$(swarm_check_regression "${SESSION_DIR}" "${W}")
      if [[ $? -eq 1 ]]; then
        # Regression detected — create targeted fix task
@@ -548,6 +589,19 @@ For each wave W (1, 2, ... WAVE_COUNT):
        # Max 1 regression-fix attempt per wave. If still regressed → escalate.
      fi
 ```
+
+### 3.3.1 Conversation Termination Conditions
+
+A task conversation terminates when ANY of these is true:
+
+| Condition | Trigger | Action |
+|-----------|---------|--------|
+| Agent writes `.result` | Normal completion | Proceed to evaluation |
+| Max turns reached (5) | Too many questions | Escalate to user with thread |
+| Poll timeout (300s) | Agent unresponsive | Mark TIMEOUT |
+| Agent writes `BLOCKED` in `.question` | Cannot proceed | Escalate to user |
+
+The orchestrator NEVER leaves a conversation open indefinitely.
 
 ### 3.4 Claude Subagent Dispatch (fallback only)
 

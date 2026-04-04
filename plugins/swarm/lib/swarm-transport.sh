@@ -954,3 +954,121 @@ swarm_check_revision_convergence() {
     echo "stalled"
   fi
 }
+
+# ── Conversation Protocol ────────────────────────────────────────
+# AutoGen-style continuous conversations: agents can ask questions
+# mid-task via .question files, orchestrator responds via .answer files.
+
+swarm_poll_conversation() {
+  # Poll for BOTH .result AND .question files. Returns which appeared first.
+  # Usage: EVENT=$(swarm_poll_conversation "task-001.md" 300 5)
+  # Returns: "result", "question", or "timeout"
+  local task_file="$1"
+  local timeout="${2:-300}"
+  local interval="${3:-5}"
+  local elapsed=0
+  local question_file="${task_file%.md}.question"
+  local result_file="${task_file%.md}.result"
+
+  # Validate task file exists (skip for review files)
+  if [[ "${task_file}" != */reviews/* ]] && [[ ! -f "${task_file}" ]]; then
+    echo "ERROR: task file not found: ${task_file}" >&2
+    return 1
+  fi
+
+  while (( elapsed < timeout )); do
+    # Check result first (takes priority — agent finished)
+    if swarm_check_result "${task_file}"; then
+      echo "result"
+      return 0
+    fi
+    # Check for question
+    if [[ -f "${question_file}" ]] && [[ -s "${question_file}" ]]; then
+      echo "question"
+      return 0
+    fi
+    sleep "${interval}"
+    elapsed=$((elapsed + interval))
+  done
+  echo "timeout"
+  return 1
+}
+
+swarm_post_answer() {
+  # Write answer to .answer file, clear .question, notify agent pane.
+  # Usage: swarm_post_answer "task-001.md" "Use cursor-based pagination" "surface:42"
+  local task_file="$1"
+  local answer="$2"
+  local pane_id="${3:-}"
+  local answer_file="${task_file%.md}.answer"
+  local question_file="${task_file%.md}.question"
+
+  echo "${answer}" > "${answer_file}"
+  rm -f "${question_file}"
+
+  # Log to conversation thread
+  swarm_append_thread "${task_file}" "orchestrator" "answer" "${answer}"
+
+  # Notify agent in pane to check answer
+  if [[ -n "${pane_id}" ]]; then
+    swarm_pipe_prompt "${pane_id}" "Your question has been answered. Read ${answer_file} and continue your task."
+  fi
+}
+
+swarm_append_thread() {
+  # Append a turn to the conversation thread (JSONL format).
+  # Usage: swarm_append_thread "task-001.md" "agent" "question" "What schema?"
+  local task_file="$1"
+  local from="$2"
+  local msg_type="$3"
+  local content="$4"
+  local thread_file="${task_file%.md}.thread.jsonl"
+  local timestamp
+  timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Escape content for JSON (newlines, quotes, backslashes)
+  local escaped
+  escaped=$(printf '%s' "${content}" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | tr '\n' ' ')
+
+  echo "{\"ts\":\"${timestamp}\",\"from\":\"${from}\",\"type\":\"${msg_type}\",\"content\":\"${escaped}\"}" >> "${thread_file}"
+}
+
+swarm_read_thread() {
+  # Read full conversation thread for a task.
+  # Usage: THREAD=$(swarm_read_thread "task-001.md")
+  local task_file="$1"
+  local thread_file="${task_file%.md}.thread.jsonl"
+  if [[ -f "${thread_file}" ]]; then
+    cat "${thread_file}"
+  else
+    echo ""
+  fi
+}
+
+# ── Cross-Wave Context Channel ───────────────────────────────────
+# Agents post discoveries during execution; orchestrator propagates
+# relevant ones to subsequent waves.
+
+swarm_post_discovery() {
+  # Record a discovery for cross-wave context sharing.
+  # Usage: swarm_post_discovery "$SESSION_DIR" "Codex-1" "DB uses UUID primary keys"
+  local session_dir="$1"
+  local agent="$2"
+  local discovery="$3"
+  local channel="${session_dir}/context-updates.md"
+  local timestamp
+  timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo "- [${timestamp}] **${agent}**: ${discovery}" >> "${channel}"
+}
+
+swarm_get_discoveries() {
+  # Read accumulated discoveries for embedding in next wave's tasks.
+  # Usage: DISCOVERIES=$(swarm_get_discoveries "$SESSION_DIR")
+  local session_dir="$1"
+  local channel="${session_dir}/context-updates.md"
+  if [[ -f "${channel}" ]]; then
+    cat "${channel}"
+  else
+    echo ""
+  fi
+}

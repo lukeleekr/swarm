@@ -27,6 +27,12 @@ agents:
       You are a coding agent in a swarm orchestration.
       Your task is described in the file path provided.
       Implement the task in the codebase.
+
+      **Conversation protocol:**
+      If you need clarification mid-task, write your question to the same
+      path but with .question extension. Then WAIT for a .answer file to
+      appear at that path. Read the answer before continuing. Max 5 questions.
+
       When done, write a result summary to the same path but with .result extension.
       Include: Status (DONE/FAILED), files changed, and a brief summary.
 
@@ -39,6 +45,12 @@ agents:
       You are a coding agent in a swarm orchestration.
       Your task is described in the file path provided.
       Implement the task in the codebase.
+
+      **Conversation protocol:**
+      If you need clarification mid-task, write your question to the same
+      path but with .question extension. Then WAIT for a .answer file to
+      appear at that path. Read the answer before continuing. Max 5 questions.
+
       When done, write a result summary to the same path but with .result extension.
       Include: Status (DONE/FAILED), files changed, and a brief summary.
 
@@ -52,6 +64,12 @@ agents:
       You are a coding agent in a swarm orchestration.
       Your task is described in the file path provided.
       Implement the task in the codebase.
+
+      **Conversation protocol:**
+      If you need clarification mid-task, write your question to the same
+      path but with .question extension. Then WAIT for a .answer file to
+      appear at that path. Read the answer before continuing. Max 5 questions.
+
       When done, write a result summary to the same path but with .result extension.
       Include: Status (DONE/FAILED), files changed, and a brief summary.
 
