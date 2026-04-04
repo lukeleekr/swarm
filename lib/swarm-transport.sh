@@ -65,7 +65,7 @@ swarm_update_ledger_field() {
     tmp=$(mktemp "${ledger}.XXXXXX")
     sed "s|^${esc_field}: .*|${esc_field}: ${esc_value}|" "${ledger}" \
       | sed "s|^updated: .*|updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)|" \
-      > "${tmp}" && mv "${tmp}" "${ledger}" || rm -f "${tmp}"
+      > "${tmp}" && mv "${tmp}" "${ledger}" || { rm -f "${tmp}"; return 1; }
   fi
 }
 
@@ -80,7 +80,7 @@ swarm_register_agent() {
     # Replace empty agents list or append to existing entries
     if grep -q 'agents: \[\]' "${ledger}"; then
       tmp=$(mktemp "${ledger}.XXXXXX")
-      sed "s/^agents: \[\]/agents:/" "${ledger}" > "${tmp}" && mv "${tmp}" "${ledger}" || rm -f "${tmp}"
+      sed "s/^agents: \[\]/agents:/" "${ledger}" > "${tmp}" && mv "${tmp}" "${ledger}" || { rm -f "${tmp}"; return 1; }
     fi
     # Quote name and role for YAML safety; pane_id left unquoted (parsed by cleanup)
     local safe_name="${name//\'/"''"}"
@@ -92,7 +92,7 @@ swarm_register_agent() {
     status: idle
 EOF
     tmp=$(mktemp "${ledger}.XXXXXX")
-    sed "s/^updated: .*/updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)/" "${ledger}" > "${tmp}" && mv "${tmp}" "${ledger}" || rm -f "${tmp}"
+    sed "s/^updated: .*/updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)/" "${ledger}" > "${tmp}" && mv "${tmp}" "${ledger}" || { rm -f "${tmp}"; return 1; }
   fi
 }
 
@@ -259,6 +259,7 @@ swarm_write_task() {
   local session_dir="$1"
   local task_num="$2"
   local content="$3"
+  [[ -d "${session_dir}/tasks" ]] || { echo "ERROR: tasks dir missing: ${session_dir}/tasks" >&2; return 1; }
   local task_file="${session_dir}/tasks/task-$(printf '%03d' "${task_num}").md"
   echo "${content}" > "${task_file}"
   echo "${task_file}"
@@ -293,6 +294,8 @@ swarm_poll_result() {
   local timeout="${2:-300}"
   local interval="${3:-5}"
   local elapsed=0
+
+  [[ -f "${task_file}" ]] || { echo "ERROR: task file not found: ${task_file}" >&2; return 1; }
 
   while (( elapsed < timeout )); do
     if swarm_check_result "${task_file}"; then
