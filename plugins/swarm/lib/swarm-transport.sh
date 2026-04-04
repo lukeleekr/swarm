@@ -140,16 +140,17 @@ swarm_kill_agent() {
   case "${mux}" in
     cmux)
       if [[ "${pane_id}" == surface:* ]]; then
-        # Interrupt any running process, then exit the shell
+        # 1. Ctrl+C — clear escape mode / interrupt running process
         cmux send-key --surface "${pane_id}" C-c 2>/dev/null || true
         sleep 0.5
+        # 2. /exit — works for both Claude CLI and Codex CLI
         cmux send --surface "${pane_id}" "/exit" 2>/dev/null || true
         cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
-        sleep 0.5
+        sleep 2
+        # 3. exit — kill the underlying shell (pane closes when shell exits)
         cmux send --surface "${pane_id}" "exit" 2>/dev/null || true
         cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
         sleep 1
-        cmux close-surface --surface "${pane_id}" 2>/dev/null || true
       fi
       ;;
     tmux)
