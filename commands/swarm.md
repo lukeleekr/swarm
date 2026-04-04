@@ -320,53 +320,60 @@ For each wave W (1, 2, ... WAVE_COUNT):
 
   4. Evaluate results for wave W (SELF-CORRECTIVE LOOP):
 
-     For each completed task in this wave, the orchestrator (Claude Opus) performs
-     quality evaluation — not just status check. This is the Autoresearch-style loop:
+     For each completed task in this wave, run the quality evaluation loop.
+     This is NOT optional — the orchestrator MUST evaluate every task result.
 
-     a. Read the .result file (status, files changed, summary)
-     b. Read the ACTUAL files the agent created/modified
-     c. Evaluate against the ## Acceptance Criteria in the original task-NNN.md
-     d. Classify:
+     ```bash
+     # Step A: Check result status
+     STATUS=$(swarm_check_result_status "${SESSION_DIR}/tasks/task-NNN.result")
 
-        ACCEPT — Status: DONE AND code meets all acceptance criteria
-        → Mark task complete, move on.
+     # Step B: Get acceptance criteria from original task
+     CRITERIA=$(swarm_get_acceptance_criteria "${SESSION_DIR}/tasks/task-NNN.md")
 
-        REVISE — Status: DONE BUT quality gaps found (missing edge cases,
-        wrong logic, doesn't match acceptance criteria, style issues)
-        → Create task-NNN-revM.md with specific feedback:
-          - What was wrong (file:line references)
-          - Which acceptance criteria are not met
-          - What to fix (concrete, not vague)
-        → Dispatch revision to SAME agent pane
-        → Poll for task-NNN-revM.result
-        → Re-evaluate (max 2 revision rounds per task)
-
-        RETRY — Status: FAILED or malformed result
-        → swarm_clear_result, retry with clarified prompt (max 2 retries)
-
-        TIMEOUT — No result within 5 minutes
-        → escalate to user
-
-        ESCALATE — 2 revisions exhausted, still not meeting criteria
-        → Flag to user with diagnosis: "Task NNN failed quality gate after 2 revisions.
-          Issues: [list]. Agent output: [summary]. Please intervene or accept as-is."
-
-     Revision task template (task-NNN-revM.md):
-     ```markdown
-     # Revision M for Task NNN: [title]
-
-     ## Original Acceptance Criteria
-     [copied from task-NNN.md]
-
-     ## Issues Found
-     - [file:line] [what's wrong] [why it matters]
-
-     ## Required Changes
-     - [specific fix instructions]
-
-     ## Instructions
-     Write result to: task-NNN-revM.result (same format as original)
+     # Step C: Get files the agent changed
+     CHANGED=$(swarm_get_files_changed "${SESSION_DIR}/tasks/task-NNN.result")
      ```
+
+     **Step D: Read and evaluate (orchestrator judgment)**
+     For each file in CHANGED, READ the actual file content.
+     Compare against each line in CRITERIA. For each criterion, mark PASS or FAIL.
+     This is the critical step — do not skip it.
+
+     **Step E: Route based on evaluation**
+
+     | Evaluation | Condition | Action |
+     |-----------|-----------|--------|
+     | **ACCEPT** | STATUS=DONE AND all criteria PASS | Mark complete, move on |
+     | **REVISE** | STATUS=DONE BUT 1+ criteria FAIL | Create revision task (below) |
+     | **RETRY** | STATUS=FAILED or MALFORMED | `swarm_clear_result`, retry same task (max 2) |
+     | **TIMEOUT** | STATUS=MISSING after poll timeout | Escalate to user |
+     | **ESCALATE** | 2 revisions exhausted, still failing | Flag to user with diagnosis |
+
+     **REVISE flow (max 2 rounds per task):**
+     ```bash
+     if swarm_can_revise "${SESSION_DIR}" "task-NNN"; then
+       REV_COUNT=$(swarm_get_revision_count "${SESSION_DIR}" "task-NNN")
+       NEXT_REV=$(( REV_COUNT + 1 ))
+       REV_FILE=$(swarm_write_revision_task "${SESSION_DIR}" "task-NNN" "${NEXT_REV}" \
+         "$(echo "ISSUES_DESCRIPTION")" "$(echo "${CRITERIA}")")
+       # Dispatch revision to the SAME agent pane
+       swarm_pipe_prompt "${AGENT_PANE}" "Read and fix: ${REV_FILE}"
+       # Poll for revision result
+       swarm_poll_result "${REV_FILE}" 300
+       # Re-evaluate (recursive — same Step A-E on the revision result)
+     else
+       # Max revisions reached — escalate
+       echo "Task NNN failed quality gate after 2 revisions."
+     fi
+     ```
+
+     **What "ISSUES_DESCRIPTION" must contain (non-negotiable):**
+     - Which acceptance criterion failed and why
+     - File path + line number where the problem is
+     - What the code does vs what it should do
+     - Concrete fix instruction (not vague "improve error handling")
+
+     If you cannot identify specific issues, the task PASSES — do not revise on vague feelings.
 
   5. Update progress:
      swarm_update_ledger_field "${SESSION_DIR}" "tasks_done" "N"

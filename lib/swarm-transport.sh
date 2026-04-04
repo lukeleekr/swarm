@@ -611,3 +611,97 @@ swarm_classify_task() {
   # Default: standard
   echo "sonnet"
 }
+
+# ── Self-Corrective Loop ─────────────────────────────────────────
+
+swarm_get_revision_count() {
+  # How many revisions have been attempted for a task?
+  # Usage: COUNT=$(swarm_get_revision_count "${SESSION_DIR}" "task-001")
+  local session_dir="$1"
+  local task_id="$2"
+  local count=0
+  for rev in "${session_dir}/tasks/${task_id}-rev"*.md; do
+    [[ -f "${rev}" ]] && (( count++ ))
+  done
+  echo "${count}"
+}
+
+swarm_check_result_status() {
+  # Parse a .result file and return: DONE, FAILED, or MISSING
+  # Usage: STATUS=$(swarm_check_result_status "/path/to/task-001.result")
+  local result_file="$1"
+  if [[ ! -f "${result_file}" ]]; then
+    echo "MISSING"
+    return 0
+  fi
+  local status_line
+  status_line=$(grep -m1 '^Status:' "${result_file}" 2>/dev/null || echo "")
+  if echo "${status_line}" | grep -qi "DONE"; then
+    echo "DONE"
+  elif echo "${status_line}" | grep -qi "FAILED"; then
+    echo "FAILED"
+  else
+    echo "MALFORMED"
+  fi
+}
+
+swarm_get_acceptance_criteria() {
+  # Extract acceptance criteria from a task file as a checklist
+  # Usage: CRITERIA=$(swarm_get_acceptance_criteria "/path/to/task-001.md")
+  local task_file="$1"
+  sed -n '/^## Acceptance Criteria/,/^##/p' "${task_file}" 2>/dev/null | grep '^- ' || echo ""
+}
+
+swarm_get_files_changed() {
+  # Extract files changed from a .result file
+  # Usage: FILES=$(swarm_get_files_changed "/path/to/task-001.result")
+  local result_file="$1"
+  grep -A20 '^Files Changed:' "${result_file}" 2>/dev/null | grep -oE '\S+\.\w+' | head -20 || echo ""
+}
+
+swarm_write_revision_task() {
+  # Create a revision task file with specific feedback
+  # Usage: swarm_write_revision_task "${SESSION_DIR}" "task-001" "1" "issues..." "criteria..."
+  local session_dir="$1"
+  local task_id="$2"
+  local rev_num="$3"
+  local issues="$4"
+  local criteria="$5"
+  local original_task="${session_dir}/tasks/${task_id}.md"
+  local rev_file="${session_dir}/tasks/${task_id}-rev${rev_num}.md"
+  local title
+  title=$(head -1 "${original_task}" 2>/dev/null | sed 's/^# //')
+
+  cat > "${rev_file}" << REVEOF
+# Revision ${rev_num} for ${task_id}: ${title}
+
+## Original Acceptance Criteria
+${criteria}
+
+## Issues Found
+${issues}
+
+## Required Changes
+Fix the issues listed above. All original acceptance criteria must pass.
+
+## Instructions
+Write your result to: ${session_dir}/tasks/${task_id}-rev${rev_num}.result
+Format:
+- Status: DONE | FAILED
+- Files Changed: [list]
+- Summary: [what you fixed]
+- Issues: [any remaining problems]
+REVEOF
+
+  echo "${rev_file}"
+}
+
+swarm_can_revise() {
+  # Check if more revisions are allowed (max 2)
+  # Usage: if swarm_can_revise "${SESSION_DIR}" "task-001"; then ...
+  local session_dir="$1"
+  local task_id="$2"
+  local count
+  count=$(swarm_get_revision_count "${session_dir}" "${task_id}")
+  (( count < 2 ))
+}
