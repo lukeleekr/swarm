@@ -362,12 +362,17 @@ For each wave W (1, 2, ... WAVE_COUNT):
        swarm_poll_result "${REV_FILE}" 300
        # Re-evaluate: run Steps A-E on the REVISION result
        STATUS=$(swarm_check_result_status "${REV_FILE%.md}.result")
-       [[ "${STATUS}" == "DONE" ]] || continue
-       # Read changed files, re-check criteria — if all pass, break
-       # If criteria still fail, loop continues with new ISSUES_DESCRIPTION
-       break  # or continue if criteria still fail
+       if [[ "${STATUS}" != "DONE" ]]; then
+         continue  # FAILED/MALFORMED → try another revision
+       fi
+       # STATUS is DONE — but MUST re-check acceptance criteria (Step D)
+       # Read the actual files changed, compare against CRITERIA
+       # If all criteria PASS → break (task accepted)
+       # If criteria still FAIL → update ISSUES_DESCRIPTION and continue loop
+       # DO NOT break here without re-evaluating criteria.
+       # The orchestrator MUST read the code again at this point.
      done
-     # If loop exhausted: escalate to user
+     # If loop exhausted (swarm_can_revise returned false): escalate to user
      ```
 
      **The revision task includes the FULL original task** (not just criteria).
