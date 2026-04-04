@@ -141,7 +141,7 @@ swarm_kill_agent() {
     cmux)
       if [[ "${pane_id}" == surface:* ]]; then
         # 1. Ctrl+C — clear escape mode / interrupt running process
-        cmux send-key --surface "${pane_id}" C-c 2>/dev/null || true
+        cmux send-key --surface "${pane_id}" ctrl+c 2>/dev/null || true
         sleep 0.5
         # 2. /exit — works for both Claude CLI and Codex CLI
         cmux send --surface "${pane_id}" "/exit" 2>/dev/null || true
@@ -299,10 +299,8 @@ swarm_cleanup() {
 
   if [[ ! -f "${ledger}" ]]; then return 0; fi
 
-  local pane_ids
-  pane_ids=$(grep 'pane_id:' "${ledger}" | awk '{print $2}' 2>/dev/null || echo "")
-  for pane_id in ${pane_ids}; do
-    swarm_kill_agent "${pane_id}"
+  grep 'pane_id:' "${ledger}" 2>/dev/null | awk '{print $2}' | while IFS= read -r pane_id; do
+    [[ -n "${pane_id}" ]] && swarm_kill_agent "${pane_id}"
   done
 
   swarm_update_ledger_field "${session_dir}" "phase" "done"
