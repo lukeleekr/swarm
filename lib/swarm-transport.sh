@@ -562,3 +562,53 @@ swarm_get_completed_tasks() {
     fi
   done
 }
+
+# ── Model Routing ────────────────────────────────────────────────
+
+swarm_classify_task() {
+  # Classify a task file as simple/standard/complex based on keywords + file count.
+  # Reads model_routing from agents.yaml for keyword lists.
+  # Usage: MODEL=$(swarm_classify_task "/path/to/task-001.md")
+  local task_file="$1"
+  local registry="${HOME}/.claude/local-plugins/plugins/swarm/agents.yaml"
+
+  local content
+  content=$(cat "${task_file}" 2>/dev/null || echo "")
+  local content_lower
+  content_lower=$(echo "${content}" | tr '[:upper:]' '[:lower:]')
+
+  # Count files to touch
+  local file_count=0
+  file_count=$(echo "${content}" | sed -n '/^## Files to Touch/,/^##/p' | grep -c '^- ' 2>/dev/null || echo "0")
+
+  # Check complex keywords first (highest priority)
+  for kw in refactor architect design system migrate security optimize; do
+    if echo "${content_lower}" | grep -qw "${kw}"; then
+      echo "opus"
+      return 0
+    fi
+  done
+
+  # Check if file count pushes to complex
+  if (( file_count > 5 )); then
+    echo "opus"
+    return 0
+  fi
+
+  # Check simple keywords
+  local is_simple=false
+  for kw in fix typo rename update change "add comment" simple small trivial; do
+    if echo "${content_lower}" | grep -qw "${kw}"; then
+      is_simple=true
+      break
+    fi
+  done
+
+  if [[ "${is_simple}" == true ]] && (( file_count <= 2 )); then
+    echo "haiku"
+    return 0
+  fi
+
+  # Default: standard
+  echo "sonnet"
+}

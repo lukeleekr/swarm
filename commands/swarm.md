@@ -64,7 +64,11 @@ STALE=$(swarm_find_stale_sessions "$(pwd)")
 **If `--resume` AND interrupted session found:**
 - Read the interrupted session's ledger and completed task results
 - Present summary: "Found interrupted session [ID]. N of M tasks complete. Resume from wave W?"
-- On user approval: reuse that session (set `SESSION_DIR` to it), skip to Phase 3 with only remaining tasks
+- On user approval: reuse that session (set `SESSION_DIR` to it), record the resume:
+  ```bash
+  swarm_update_ledger_field "${SESSION_DIR}" "resumed_from" "${INTERRUPTED_SESSION_ID}"
+  ```
+  Skip to Phase 3 with only remaining tasks.
 - On user decline: proceed to fresh session
 
 **If `--resume` but no interrupted session:**
@@ -299,19 +303,70 @@ For each wave W (1, 2, ... WAVE_COUNT):
      Before dispatch: clear stale results:
      swarm_clear_result "${SESSION_DIR}/tasks/task-NNN.md"
 
+     Model routing (Claude agents only, when supports_model_routing: true):
+     MODEL=$(swarm_classify_task "${SESSION_DIR}/tasks/task-NNN.md")
+     # MODEL = haiku | sonnet | opus
+
      Pane mode (tmux/cmux) — pipe to interactive agent:
-     swarm_pipe_prompt "${CODEX_PANE}" "Read and implement the task at ${SESSION_DIR}/tasks/task-NNN.md — write result to task-NNN.result with a 'Status: DONE' or 'Status: FAILED' line."
+     swarm_pipe_prompt "${AGENT_PANE}" "Read and implement the task at ${SESSION_DIR}/tasks/task-NNN.md — write result to task-NNN.result with a 'Status: DONE' or 'Status: FAILED' line."
 
      Headless mode (none) — one-shot exec per task:
-     codex exec "$(cat ${SESSION_DIR}/tasks/task-NNN.md). Write your result summary to ${SESSION_DIR}/tasks/task-NNN.result. Start with 'Status: DONE' or 'Status: FAILED', then Files Changed and Summary sections."
+     For Claude agents: claude --dangerously-skip-permissions --model ${MODEL} -p "$(cat ${SESSION_DIR}/tasks/task-NNN.md). Write result to task-NNN.result."
+     For Codex agents: codex exec "$(cat ${SESSION_DIR}/tasks/task-NNN.md). Write result to task-NNN.result."
+     For other agents: use command_exec from registry.
 
   3. Poll all results in wave W concurrently:
      swarm_poll_result "${SESSION_DIR}/tasks/task-NNN.md" 300
 
-  4. Evaluate results for wave W:
-     - Status: DONE → accept
-     - Status: FAILED → swarm_clear_result, retry with clarified prompt (max 2 retries per task)
-     - Timeout → escalate to user
+  4. Evaluate results for wave W (SELF-CORRECTIVE LOOP):
+
+     For each completed task in this wave, the orchestrator (Claude Opus) performs
+     quality evaluation — not just status check. This is the Autoresearch-style loop:
+
+     a. Read the .result file (status, files changed, summary)
+     b. Read the ACTUAL files the agent created/modified
+     c. Evaluate against the ## Acceptance Criteria in the original task-NNN.md
+     d. Classify:
+
+        ACCEPT — Status: DONE AND code meets all acceptance criteria
+        → Mark task complete, move on.
+
+        REVISE — Status: DONE BUT quality gaps found (missing edge cases,
+        wrong logic, doesn't match acceptance criteria, style issues)
+        → Create task-NNN-revM.md with specific feedback:
+          - What was wrong (file:line references)
+          - Which acceptance criteria are not met
+          - What to fix (concrete, not vague)
+        → Dispatch revision to SAME agent pane
+        → Poll for task-NNN-revM.result
+        → Re-evaluate (max 2 revision rounds per task)
+
+        RETRY — Status: FAILED or malformed result
+        → swarm_clear_result, retry with clarified prompt (max 2 retries)
+
+        TIMEOUT — No result within 5 minutes
+        → escalate to user
+
+        ESCALATE — 2 revisions exhausted, still not meeting criteria
+        → Flag to user with diagnosis: "Task NNN failed quality gate after 2 revisions.
+          Issues: [list]. Agent output: [summary]. Please intervene or accept as-is."
+
+     Revision task template (task-NNN-revM.md):
+     ```markdown
+     # Revision M for Task NNN: [title]
+
+     ## Original Acceptance Criteria
+     [copied from task-NNN.md]
+
+     ## Issues Found
+     - [file:line] [what's wrong] [why it matters]
+
+     ## Required Changes
+     - [specific fix instructions]
+
+     ## Instructions
+     Write result to: task-NNN-revM.result (same format as original)
+     ```
 
   5. Update progress:
      swarm_update_ledger_field "${SESSION_DIR}" "tasks_done" "N"
