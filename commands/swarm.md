@@ -88,6 +88,7 @@ Read `~/.claude/local-plugins/plugins/swarm/agents.yaml`. Verify that at least o
 ### 0.5 Initialize Session
 
 ```bash
+PRE_SWARM_SHA=$(git rev-parse HEAD)  # anchor for Phase 4 review diff
 SESSION_ID=$(swarm_new_session "$(pwd)")
 SESSION_DIR="$(pwd)/.swarm/${SESSION_ID}"
 swarm_init_ledger "${SESSION_DIR}" "${SESSION_ID}" "${MUX}"
@@ -452,7 +453,10 @@ Read the `--agents` flag used in this session. Select reviewer per the table abo
 ### 4.2 Prepare review context
 
 ```bash
-BASE_SHA=$(git rev-parse HEAD~$(git diff --stat ${PRE_SWARM_SHA}..HEAD | tail -1 | awk '{print $1}') 2>/dev/null || git rev-parse HEAD~1)
+# PRE_SWARM_SHA was captured at Phase 0.5 init:
+#   PRE_SWARM_SHA=$(git rev-parse HEAD)
+# If not set, fall back to HEAD~1
+BASE_SHA="${PRE_SWARM_SHA:-$(git rev-parse HEAD~1)}"
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
