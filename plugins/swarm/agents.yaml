@@ -33,8 +33,8 @@ agents:
   gemini:
     command_exec: "gemini --cli"
     command_interactive: "gemini"
-    roles: [coder, reviewer, designer]
-    capabilities: [implement, review, design]
+    roles: [coder, designer]
+    capabilities: [implement, design]
     init_prompt: |
       You are a coding agent in a swarm orchestration.
       Your task is described in the file path provided.
@@ -45,8 +45,8 @@ agents:
   claude:
     command_exec: "claude --dangerously-skip-permissions -p"
     command_interactive: "claude --dangerously-skip-permissions"
-    roles: [coder, reviewer, researcher]
-    capabilities: [implement, review, debug, research, refactor]
+    roles: [coder, researcher]
+    capabilities: [implement, debug, research, refactor]
     supports_model_routing: true
     init_prompt: |
       You are a coding agent in a swarm orchestration.
@@ -68,7 +68,7 @@ agents:
 # Change the order to change the default.
 role_priority:
   coder: [codex, gemini, claude]
-  reviewer: []       # Orchestrator (Claude Opus) always reviews — no agent delegation
+  # Review is cross-assigned (Phase 4): Claude wrote → Codex reviews; Codex wrote → Claude Opus reviews via superpowers:requesting-code-review
   researcher: [claude]
   designer: [gemini]
 

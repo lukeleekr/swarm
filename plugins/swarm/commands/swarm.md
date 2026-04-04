@@ -347,41 +347,79 @@ This runs as a Claude Code subagent — no pane, no visual feedback. Last resort
 
 **For simple tasks (two-agent loop):**
 - Skip task file creation and wave grouping
-- Claude implements directly, then delegates review to Codex using `command_exec` from registry:
-  ```bash
-  codex exec "Review the changes in $(git diff --stat). Focus on correctness, edge cases, security. Write findings to ${SESSION_DIR}/reviews/review-001.result. Start with 'Status: DONE' or 'Status: NEEDS_REVISION'."
-  ```
+- Claude (orchestrator) implements directly
+- Cross-review per Phase 4 rules:
+  - If coder = Claude → review via Codex:
+    ```bash
+    codex exec "Review the changes in $(git diff --stat). Focus on correctness, edge cases, security. Write findings to ${SESSION_DIR}/reviews/review-001.result. Start with 'Status: DONE' or 'Status: NEEDS_REVISION'."
+    ```
+  - If coder = Codex → review via `Skill("superpowers:requesting-code-review")`
 - Before each retry: `swarm_clear_result` on the review file
 - Iterate if NEEDS_REVISION (max 3 rounds)
 
 ## Phase 4: Review
 
+**Cross-review rule:** The reviewer must be a different agent than the coder.
+
+| Coder Agent | Reviewer | How |
+|-------------|----------|-----|
+| Claude (any model) | Codex | `codex review` or `codex exec` with review prompt |
+| Codex | Claude Opus (orchestrator) | Invoke `Skill("superpowers:requesting-code-review")` → spawns `superpowers:code-reviewer` subagent |
+| Gemini | Codex | `codex review` or `codex exec` with review prompt |
+
 After all tasks complete:
 
-1. **Holistic review** — Manager (Claude) reads all `.result` files, checks for:
-   - Consistency across task outputs
-   - Integration issues between components
-   - Missing tests or error handling
+### 4.1 Determine reviewer
 
-2. **Codex audit** (optional for complex tasks):
-   Write review request to `${SESSION_DIR}/reviews/review-final.md`:
-   ```markdown
-   # Final Audit Request
-   
-   ## Changes Summary
-   [aggregated from all task results]
-   
-   ## Review Focus
-   - Cross-component consistency
-   - Security vulnerabilities
-   - Test coverage gaps
-   ```
+Read the `--agents` flag used in this session. Select reviewer per the table above.
 
-   Dispatch to Codex, wait for `.result`.
+### 4.2 Prepare review context
 
-3. **Fix loop** — if review finds issues:
-   - Create fix tasks → dispatch → poll → max 3 rounds
-   - If still failing after 3 rounds → escalate to user
+```bash
+BASE_SHA=$(git rev-parse HEAD~$(git diff --stat ${PRE_SWARM_SHA}..HEAD | tail -1 | awk '{print $1}') 2>/dev/null || git rev-parse HEAD~1)
+HEAD_SHA=$(git rev-parse HEAD)
+```
+
+Aggregate from all `.result` files: files changed, summaries, what was implemented.
+
+### 4.3a Codex reviews (when coder was Claude or Gemini)
+
+Spawn Codex in a CMUX pane (or exec mode) with review prompt:
+
+```bash
+codex exec "Review the code changes between ${BASE_SHA}..${HEAD_SHA}.
+Focus on: correctness, edge cases, security, test coverage, cross-component consistency.
+Write findings to ${SESSION_DIR}/reviews/review-final.result.
+Format: Status: DONE or Status: NEEDS_REVISION, then Strengths, Issues (Critical/Important/Minor), Assessment."
+```
+
+Poll for `review-final.result`.
+
+### 4.3b Claude Opus reviews (when coder was Codex)
+
+Invoke the superpowers code review skill:
+
+```
+Skill("superpowers:requesting-code-review")
+```
+
+Fill the code-reviewer template with:
+- `{WHAT_WAS_IMPLEMENTED}`: aggregated task summaries
+- `{PLAN_OR_REQUIREMENTS}`: original plan/spec or task description
+- `{BASE_SHA}`: pre-swarm commit
+- `{HEAD_SHA}`: current HEAD
+- `{DESCRIPTION}`: swarm session summary
+
+The skill spawns a `superpowers:code-reviewer` subagent that reviews the diff and returns structured feedback (Strengths, Critical/Important/Minor issues, Assessment).
+
+### 4.4 Fix loop
+
+Act on reviewer feedback:
+- **Critical** → create fix tasks, dispatch to coder agents, re-review (max 3 rounds)
+- **Important** → create fix tasks, dispatch (same loop)
+- **Minor** → note in report, do not block
+
+If still failing after 3 rounds → escalate to user.
 
 ```bash
 swarm_set_progress "Reviewing" "0.75"
