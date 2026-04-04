@@ -689,12 +689,16 @@ swarm_get_files_changed() {
       continue
     fi
     if [[ "${in_section}" == true ]]; then
-      # Stop at next section header (## or ###), not just any uppercase
-      [[ "${line}" =~ ^[[:space:]]*## ]] && break
-      # Parse "- path/to/file" or "path/to/file"
-      local filepath
-      filepath=$(echo "${line}" | sed 's/^[[:space:]]*-[[:space:]]*//' | sed 's/[[:space:]]*(.*//' | xargs)
-      [[ -n "${filepath}" && "${filepath}" != "-" ]] && echo "${filepath}"
+      # Stop at next field (Summary:, Issues:, etc.) or section header (##)
+      [[ "${line}" =~ ^(Summary|Issues|Status|##) ]] && break
+      # Skip empty lines
+      [[ -z "${line}" ]] && continue
+      # Parse "- path/to/file" lines only (must start with dash)
+      if [[ "${line}" =~ ^[[:space:]]*-[[:space:]] ]]; then
+        local filepath
+        filepath=$(echo "${line}" | sed 's/^[[:space:]]*-[[:space:]]*//' | sed 's/[[:space:]]*(.*//' | xargs)
+        [[ -n "${filepath}" ]] && echo "${filepath}"
+      fi
     fi
   done < "${result_file}"
 }
@@ -713,8 +717,11 @@ swarm_write_revision_task() {
     return 1
   fi
 
+  # Embed original task but STRIP the Instructions section to avoid
+  # conflicting result paths (original says task-NNN.result, revision
+  # needs task-NNN-revN.result).
   local original_content
-  original_content=$(cat "${original_task}")
+  original_content=$(sed '/^## Instructions/,$d' "${original_task}")
 
   cat > "${rev_file}" << REVEOF
 # Revision ${rev_num} for ${task_id}
