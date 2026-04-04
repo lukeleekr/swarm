@@ -276,7 +276,7 @@ Smart routing — Opus decides how many parallel reviewers to spawn based on pla
 | `--review-agents opus` | 1 Opus SDD subagent reviewer (fast, no pane) |
 | `--review-agents 2:opus` | 2 parallel Opus SDD subagent reviewers |
 
-**HARD RULE:** `--review-agents N` (number only) MUST spawn Codex in CMUX panes. Never substitute with Claude subagents — the user expects to SEE the reviewers in split terminals. Only `--review-agents opus` or `--review-agents N:opus` uses SDD subagents.
+**Default:** Codex in CMUX panes (cross-model review: Opus planned → Codex reviews). The orchestrator may use Claude subagents instead when Codex panes would be overkill (e.g., review-only tasks with no code changes). Use `--review-agents opus` to explicitly request SDD subagents.
 
 Each reviewer gets a **different focus prompt** to avoid redundant feedback:
 
