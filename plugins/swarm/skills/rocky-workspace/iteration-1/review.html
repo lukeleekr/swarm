@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "rocky", "runs": [{"id": "eval-1-tier0-typo-fix-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "tier-decision.txt", "type": "text", "content": "TIER: 0\nANNOUNCEMENT: Tier 0, Opus inline. No dispatch.\nSIGNALS WALKED:\n  Tier 0: fits \u2014 task is \u226420 LOC (1 character change), 1 file (/tmp/notes.md), mechanical (typo fix 'reciever' -> 'receiver'), file is <200 lines to read (12 lines total), no design judgment required. All Tier 0 signals satisfied.\n  Tier 1: N/A (Tier 0 already fits; tie-breaker says pick the LOWER tier)\n  Tier 2: N/A\n  Tier 3: N/A\nDECISION A: N/A (Tier 0 \u2014 no coder identity needed; Opus does the work directly)\nDECISION B: N/A (Tier 0 \u2014 no dispatch mechanism; do NOT source the transport library, do NOT create a .swarm/ session)\nCROSS-MODEL: N/A (Tier 0 \u2014 cross-model rule does not apply per the existing exception for trivial work)\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 0", "passed": true, "evidence": "tier-decision.txt line 1: 'TIER: 0'"}, {"text": "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase", "passed": true, "evidence": "tier-decision.txt line 2: 'ANNOUNCEMENT: Tier 0, Opus inline. No dispatch.' (exact match)"}, {"text": "Output explicitly states the transport library is not sourced", "passed": true, "evidence": "DECISION B field: 'do NOT source the transport library, do NOT create a .swarm/ session'"}, {"text": "Output explicitly states cross-model rule does not apply (per the trivial-work exception)", "passed": true, "evidence": "CROSS-MODEL field: 'cross-model rule does not apply per the existing exception for trivial work'"}], "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}, "timing": {"executor_duration_seconds": 1706.1, "total_tokens": 46613, "note": "outlier \u2014 28 min duration likely a mid-task pause; output quality is correct"}}}, {"id": "eval-1-tier0-typo-fix-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "decision.txt", "type": "text", "content": "MECHANISM: I would do this inline myself with a single Edit tool call: Edit(file_path=\"/tmp/notes.md\", old_string=\"reciever\", new_string=\"receiver\"). Since the file is only 12 lines, I'd first do a quick Read to satisfy the Edit tool's read-before-edit requirement, then the single Edit call. Total: 2 tool calls, no subagents.\nCOORDINATION: N/A\nREVIEW: N/A \u2014 a one-character typo fix on a known line in a 12-line file is self-verifying. The Edit tool will fail loudly if \"reciever\" isn't found or isn't unique, which is sufficient confirmation. No code-reviewer agent needed.\nREASONING: Spawning a subagent for a single-character string replacement would cost orders of magnitude more tokens and latency than just doing it. Karpathy rule: no abstractions for trivial work. This is the canonical \"just do it inline\" case \u2014 small, well-specified, deterministic, no judgment calls.\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 0", "passed": false, "evidence": "Baseline does not use the Tier 0/1/2/3 framework \u2014 never mentions 'Tier'. The semantic decision (inline) is correct, but the rocky vocabulary is missing because no skill was loaded."}, {"text": "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase", "passed": false, "evidence": "Baseline output has no Phase 0.0 announcement \u2014 uses freeform text 'inline (Read + single Edit), no subagents, no review' instead."}, {"text": "Output explicitly states the transport library is not sourced", "passed": false, "evidence": "Baseline has no concept of a transport library \u2014 this is rocky-specific knowledge."}, {"text": "Output explicitly states cross-model rule does not apply (per the trivial-work exception)", "passed": false, "evidence": "Baseline does not invoke any cross-model rule \u2014 no mention. The implicit decision (no review) matches Tier 0 behavior, but the rule itself is not articulated."}], "summary": {"passed": 0, "failed": 4, "total": 4, "pass_rate": 0.0}, "timing": {"executor_duration_seconds": 101.3, "total_tokens": 34534}, "claims": [{"claim": "Inline Edit is the right call for a 1-character typo fix", "type": "process", "verified": true, "evidence": "Baseline correctly identified the same semantic answer as Tier 0 \u2014 confirms rocky's Tier 0 design is sane (a Claude without rocky would also pick inline)"}]}}, {"id": "eval-2-tier1-add-test-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "tier-decision.txt", "type": "text", "content": "TIER: 1\nANNOUNCEMENT: Tier 1, Claude subagent (test-specialist). No review needed.\nSIGNALS WALKED:\n  Tier 0: doesn't fit \u2014 Tier 0 requires \"Opus already has the file in context (or it's <200 lines to read)\" AND \"no design judgment required\". Opus does not have src/utils/dates.py or tests/test_utils.py in context, and \"follow the existing test style in tests/test_utils.py\" requires reading the existing test file to match conventions, so this is not pure mechanical inline work.\n  Tier 1: fits \u2014 Tier 1 signal is \"1\u20133 files, mechanical, no formal acceptance criteria, one-shot dispatch is sufficient\". This task touches 2 files (read src/utils/dates.py + read/write tests/test_utils.py), is mechanical (3 standard pytest cases: empty string, malformed input, happy path), has no formal acceptance criteria beyond the three cases, and a single focused subagent call is sufficient. Cross-model rule does not apply (existing exception for mechanical work).\n  Tier 2: N/A (Tier 1 fit, stopped)\n  Tier 3: N/A (Tier 1 fit, stopped)\nDECISION A: N/A (Tier 1 \u2014 coder identity table only applies to Tier 2/3)\nDECISION B: N/A (Tier 1 \u2014 sub-mode dispatch table only applies to Tier 2/3; mechanism is plain Agent(subagent_type=test-specialist, prompt=...) with no team_name, single in-process call, no tmux pane)\nCROSS-MODEL: N/A (Tier 1 \u2014 cross-model rule does not apply per the existing exception for mechanical work)\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 1", "passed": true, "evidence": "tier-decision.txt: 'TIER: 1'"}, {"text": "Output names plain Agent() in-process dispatch (no team_name) \u2014 preferably test-specialist or general-purpose subagent", "passed": true, "evidence": "DECISION B: 'plain Agent(subagent_type=test-specialist, prompt=...) with no team_name, single in-process call'"}, {"text": "Output explicitly states this is a one-shot dispatch / no tmux pane", "passed": true, "evidence": "DECISION B: 'single in-process call, no tmux pane'"}, {"text": "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)", "passed": true, "evidence": "CROSS-MODEL: 'cross-model rule does not apply per the existing exception for mechanical work'"}, {"text": "Output does NOT escalate to a swarm session, panes, or wave dispatch", "passed": true, "evidence": "Stopped at Tier 1 per first-tier-that-fits rule; no .swarm/ session, no panes, no wave dispatch mentioned"}], "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0}, "timing": {"executor_duration_seconds": 95.4, "total_tokens": 46825}}}, {"id": "eval-2-tier1-add-test-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "decision.txt", "type": "text", "content": "MECHANISM: Inline execution by myself. Read tests/test_utils.py to learn the existing style (imports, fixtures, naming, assertion patterns), read src/utils/dates.py to understand parse_iso_date's signature and exception behavior, then Edit tests/test_utils.py to append three test cases (empty string, malformed input, happy path). Run pytest on the new tests to verify GREEN before reporting done.\nCOORDINATION: N/A \u2014 single-agent task, no parallelism needed.\nREVIEW: Self-review only. Re-read the diff to confirm style match (AAA structure, naming convention, exception type from the source) and that pytest passes. No separate code-reviewer agent for a 3-test addition.\nREASONING: Tier-1 task: tiny scope (~15-30 lines in one file), fully sequential (must read source before writing tests), no independent parallel workstreams. Spawning subagents would add coordination overhead with zero speedup. TDD-style inline edit is the lowest-friction path.\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 1", "passed": false, "evidence": "Baseline does not use Tier framework. Says 'Tier-1 task' in REASONING freeform but does not use it as a routing classifier."}, {"text": "Output names plain Agent() in-process dispatch (no team_name) \u2014 preferably test-specialist or general-purpose subagent", "passed": false, "evidence": "MECHANISM: 'Inline execution by myself' \u2014 baseline keeps it inline rather than dispatching to a focused subagent. This is actually one tier LIGHTER than rocky's recommendation (Tier 0 instead of Tier 1)."}, {"text": "Output explicitly states this is a one-shot dispatch / no tmux pane", "passed": false, "evidence": "Baseline says 'no parallelism' but does not articulate the dispatch shape in rocky's vocabulary."}, {"text": "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)", "passed": false, "evidence": "Baseline does not invoke cross-model rule \u2014 no mention. Self-review only."}, {"text": "Output does NOT escalate to a swarm session, panes, or wave dispatch", "passed": true, "evidence": "Baseline stayed inline \u2014 definitely no escalation. Correct semantic decision."}], "summary": {"passed": 1, "failed": 4, "total": 5, "pass_rate": 0.2}, "timing": {"executor_duration_seconds": 104.1, "total_tokens": 34513}, "claims": [{"claim": "Inline is the right call for a 3-test addition", "type": "process", "verified": true, "evidence": "Baseline picked inline (one tier lighter than rocky's Tier 1 subagent recommendation). Either would work \u2014 neither is wrong, but rocky's choice offloads boilerplate context to the subagent."}], "eval_feedback": {"suggestions": [{"reason": "The baseline result for Tier 1 reveals an interesting question: is sending to a focused subagent strictly better than doing it inline for a 3-test addition? The skill should explain WHY Tier 1 prefers a subagent over Opus inline \u2014 context offload, model fit, etc."}], "overall": "Useful \u2014 shows rocky's Tier 1 is not strictly necessary, just preferable for context efficiency."}}}, {"id": "eval-3-tier2-claude-sdd-jwt-auth-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "tier-decision.txt", "type": "text", "content": "TIER: 2\nANNOUNCEMENT: Tier 2, Claude SDD (in-process Skill invocation), Codex plan reviewer, Codex code reviewer.\nSIGNALS WALKED:\n  Tier 0: doesn't fit \u2014 far more than 20 LOC, multiple files (User model, auth utils, JWT module, 5 route handlers, middleware, test files), and substantive design judgment required (token shape, refresh strategy, middleware layering).\n  Tier 1: doesn't fit \u2014 spans well beyond 1\u20133 files, has explicit acceptance criteria (5 named endpoints, argon2 hashing, JWT generation/verification, per-endpoint tests, auth middleware), and is not a mechanical one-shot dispatch.\n  Tier 2: FITS \u2014 substantive feature with clear acceptance criteria, ordered dependencies (User model \u2192 password hashing \u2192 JWT gen/verify \u2192 endpoints \u2192 middleware \u2192 tests), quality matters more than throughput, and the work is one coherent feature best executed by a single coder running the SDD loop with plan + code review gates. STOP here per \"first tier that fits\" rule.\n  Tier 3: not evaluated \u2014 Tier 2 fit first; tasks are not 3+ truly independent disjoint modules (they form a single dependency chain), and the user did not ask for visible multi-pane parallelism.\nDECISION A: Claude \u2014 user explicitly said \"use claude only ... keep it inside the same opus session\", which maps to the --agents claude flag, overriding the default Codex coder.\nDECISION B: Tier 2 + Claude per the Decision B table \u2192 Opus invokes Skill(\"superpowers:subagent-driven-development\") directly in its own (this) session. NO tmux pane is spawned, NO swarm_spawn_agent call, NO fresh Claude process \u2014 it is an in-process Skill invocation that runs the Superpowers SDD loop on the Claude side.\nCROSS-MODEL: Plan reviewer = Codex pane (always, per Phase 2.5 \u2014 spawned via swarm_spawn_agent to review the plan before Phase 3). Code reviewer = Codex pane (opposite-model of the Claude coder, per Phase 4.3a \u2014 Codex pane invokes superpowers:requesting-code-review from ~/.codex/superpowers/skills/requesting-code-review/ to review the diff produced by Claude).\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 2", "passed": true, "evidence": "tier-decision.txt: 'TIER: 2'"}, {"text": "Decision A is Claude (honors --agents claude flag from 'use claude only')", "passed": true, "evidence": "DECISION A: 'Claude \u2014 user explicitly said \"use claude only ... keep it inside the same opus session\", which maps to the --agents claude flag, overriding the default Codex coder.'"}, {"text": "Decision B is in-process Skill('superpowers:subagent-driven-development') invocation", "passed": true, "evidence": "DECISION B: 'Opus invokes Skill(\"superpowers:subagent-driven-development\") directly in its own (this) session.'"}, {"text": "Output explicitly states NO tmux pane / NO swarm_spawn_agent / NO fresh Claude process", "passed": true, "evidence": "DECISION B: 'NO tmux pane is spawned, NO swarm_spawn_agent call, NO fresh Claude process \u2014 it is an in-process Skill invocation'"}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": true, "evidence": "CROSS-MODEL: 'Plan reviewer = Codex pane (always, per Phase 2.5 \u2014 spawned via swarm_spawn_agent to review the plan before Phase 3)'"}, {"text": "Output names Codex (cross-model) as the code reviewer via Phase 4.3a / superpowers:requesting-code-review", "passed": true, "evidence": "CROSS-MODEL: 'Code reviewer = Codex pane (opposite-model of the Claude coder, per Phase 4.3a \u2014 Codex pane invokes superpowers:requesting-code-review from ~/.codex/superpowers/skills/requesting-code-review/...'"}], "summary": {"passed": 6, "failed": 0, "total": 6, "pass_rate": 1.0}, "timing": {"executor_duration_seconds": 88.9, "total_tokens": 47584}, "claims": [{"claim": "user --agents claude flag overrides coder identity but NOT the tier", "type": "factual", "verified": true, "evidence": "The output explicitly notes: 'the user's --agents claude flag overrides the default coder identity but does NOT override the tier \u2014 tier is still picked by the size/dependency signals' \u2014 matches the skill's tie-breaker rule"}]}}, {"id": "eval-3-tier2-claude-sdd-jwt-auth-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "decision.txt", "type": "text", "content": "MECHANISM: Inline implementation in this same Opus session using TDD per the user's testing rules. Sequence: (1) brainstorm + clarify scope, (2) write a short plan with phases (model, hashing, JWT, endpoints, middleware, tests), (3) RED/GREEN/REFACTOR per endpoint using pytest, (4) self-review against coding-and-patterns.md and karpathy.md before finishing. No subagents, no Codex panes \u2014 user explicitly said \"use claude only\" and \"keep it inside the same opus session\".\nCOORDINATION: N/A \u2014 single-agent execution. Would use TaskCreate/TaskUpdate to track the phases (User model, password hashing, JWT utils, 5 endpoints, middleware, tests) so progress is visible, but all work happens in this session.\nREVIEW: Self-review by the same Opus session at the end \u2014 re-read diffs against karpathy guidelines (surgical changes, no speculative abstraction), coding-and-patterns.md (Pydantic at boundaries, AppError hierarchy, no hardcoded secrets, env-loaded JWT secret), and run the full pytest suite to confirm 100% coverage on the auth path (auth is in the \"100% coverage\" bucket per workflow-and-testing.md). No second model invoked because the user excluded Codex and didn't ask for a separate reviewer agent.\nREASONING: User gave two hard constraints \u2014 Claude only, same Opus session \u2014 which rules out Codex panes, swarm dispatch, and spawning subagents. The task is ~6-8 files of well-trodden FastAPI/JWT territory, comfortably within one Opus session with TDD, so inline execution is the right fit and matches the karpathy \"no speculative complexity\" rule.\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 2", "passed": false, "evidence": "Baseline does not use Tier framework. Picks 'Inline implementation in this same Opus session'."}, {"text": "Decision A is Claude (honors --agents claude flag from 'use claude only')", "passed": false, "evidence": "Baseline does honor 'use claude only' but does not articulate it as the Decision A Claude path \u2014 just chooses inline."}, {"text": "Decision B is in-process Skill('superpowers:subagent-driven-development') invocation", "passed": false, "evidence": "Baseline does NOT invoke superpowers:subagent-driven-development at all. Just plans inline TDD by hand. Loses the SDD discipline (implementer / spec-reviewer / quality-reviewer loop)."}, {"text": "Output explicitly states NO tmux pane / NO swarm_spawn_agent / NO fresh Claude process", "passed": false, "evidence": "Implicit (it's inline) but not stated in rocky's vocabulary."}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": false, "evidence": "CRITICAL MISS: Baseline has NO plan review. Skips Phase 2.5 entirely. The plan reviewer pane is mandatory for substantive features per the cross-model hard rule."}, {"text": "Output names Codex (cross-model) as the code reviewer via Phase 4.3a / superpowers:requesting-code-review", "passed": false, "evidence": "CRITICAL MISS: Baseline says 'No second model invoked because the user excluded Codex' \u2014 this misreads the user. The user excluded Codex CODERS, not Codex REVIEWERS. The skill correctly understands --agents claude controls coder identity, leaving Codex available for the cross-model code review."}], "summary": {"passed": 0, "failed": 6, "total": 6, "pass_rate": 0.0}, "timing": {"executor_duration_seconds": 88.2, "total_tokens": 35133}, "claims": [{"claim": "Baseline misinterprets 'use claude only' as forbidding Codex entirely (including reviewers)", "type": "factual", "verified": true, "evidence": "Baseline REVIEW field: 'No second model invoked because the user excluded Codex'. This is a quality gate failure \u2014 the cross-model code review is dropped silently."}], "eval_feedback": {"suggestions": [{"reason": "This eval surfaces rocky's most valuable behavior: enforcing cross-model code review even when the user says 'claude only'. The hard-rule tie-breaker (--agents flag affects coder, not reviewer) is non-obvious and valuable. Worth keeping this eval prominent."}], "overall": "Discriminating eval \u2014 rocky catches a real quality gate failure that baseline silently drops."}}}, {"id": "eval-4-tier3-codex-parallel-mini-projects-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "tier-decision.txt", "type": "text", "content": "TIER: 3\nANNOUNCEMENT: Tier 3, Codex Parallel via multiple Codex panes (3 coders), Codex plan reviewer, Claude code reviewer.\nSIGNALS WALKED:\n  Tier 0: doesn't fit \u2014 3 separate mini-projects across multiple files/directories, not \u226420 LOC, not single-file mechanical work, requires design judgment per module.\n  Tier 1: doesn't fit \u2014 exceeds 1\u20133 files (3 modules \u00d7 multiple files each), user explicitly wants visible parallel execution in tmux panes, not a single in-process one-shot dispatch.\n  Tier 2: doesn't fit \u2014 user explicitly asks for 3 agents working in parallel (\"have 3 codex agents... in parallel\"), which is the opposite of Tier 2's sequential single-coder SDD shape; throughput from parallelism is the explicit goal.\n  Tier 3: fits \u2014 (1) \"3+ tasks that are TRULY independent (disjoint files/modules)\" satisfied: calculator / file utilities / string utilities each in its own directory under projects/, fully independent files; (2) user explicitly wants visible multi-pane orchestration (\"i want to watch them work in tmux panes\"); (3) tie-breaker \"user says 'spawn agents' / 'I want to watch it' \u2192 bump to Tier 3\" matches \"have 3 codex agents\" + \"watch them work in tmux panes\".\nDECISION A: Codex \u2014 no --agents flag passed, default coder identity for Tier 3 is Codex (per Decision A table: \"default \u2192 Codex\"). User also explicitly said \"codex agents\", reinforcing the default.\nDECISION B: Multiple Codex panes via swarm_spawn_agent in wave layout (Phase 3.3 wave dispatch, bash transport via swarm-transport.sh). Per Decision B table row \"Tier 3 / Codex (default)\": \"Multiple Codex panes via swarm_spawn_agent in wave layout (existing Phase 3.3 wave dispatch). Bash transport.\" NOT Native AgentTeam (that's the Tier 3 + --agents claude variant), NOT mcp__codex__codex (HARD RULE forbids MCP for dispatch).\nCROSS-MODEL: Plan reviewer = Codex pane (Phase 2.5.2 spawns it \u2014 Codex pane is always the plan reviewer per the cross-model rule recap, regardless of coder identity). Code reviewer = Claude Opus in-process via Skill(\"superpowers:requesting-code-review\") (Phase 4.3b) \u2014 because the coder is Codex, the opposite-model code reviewer is Claude Opus per the rule \"Codex coder \u2192 Claude reviews via Skill('superpowers:requesting-code-review') in Opus's session \u2014 Phase 4.3b\".\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 3", "passed": true, "evidence": "tier-decision.txt: 'TIER: 3'"}, {"text": "Decision A is Codex (default, no --agents flag)", "passed": true, "evidence": "DECISION A: 'Codex \u2014 no --agents flag passed, default coder identity for Tier 3 is Codex (per Decision A table: \"default \u2192 Codex\")'"}, {"text": "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport", "passed": true, "evidence": "DECISION B: 'Multiple Codex panes via swarm_spawn_agent in wave layout (Phase 3.3 wave dispatch, bash transport via swarm-transport.sh)'"}, {"text": "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)", "passed": true, "evidence": "DECISION B: 'NOT mcp__codex__codex (HARD RULE forbids MCP for dispatch)'"}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": true, "evidence": "CROSS-MODEL: 'Plan reviewer = Codex pane (Phase 2.5.2 spawns it \u2014 Codex pane is always the plan reviewer per the cross-model rule recap, regardless of coder identity)'"}, {"text": "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b \u2014 opposite-model from Codex coder)", "passed": true, "evidence": "CROSS-MODEL: 'Code reviewer = Claude Opus in-process via Skill(\"superpowers:requesting-code-review\") (Phase 4.3b) \u2014 because the coder is Codex, the opposite-model code reviewer is Claude Opus per the rule \"Codex coder \u2192 Claude reviews\"'"}, {"text": "Output does NOT use Native AgentTeam (that variant requires --agents claude)", "passed": true, "evidence": "DECISION B: 'NOT Native AgentTeam (that's the Tier 3 + --agents claude variant)'"}], "summary": {"passed": 7, "failed": 0, "total": 7, "pass_rate": 1.0}, "timing": {"executor_duration_seconds": 80.0, "total_tokens": 47553}}}, {"id": "eval-4-tier3-codex-parallel-mini-projects-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "decision.txt", "type": "text", "content": "MECHANISM: Spawn 3 Codex agents in parallel via the mcp__codex__codex MCP tool, one per mini-project (calculator, file_utils, string_utils). Each Codex call gets its own cwd (projects/calculator, projects/file_utils, projects/string_utils), workspace-write sandbox, and a self-contained prompt specifying module name, required functions, and a TDD requirement (pytest tests + 100% coverage on the small surface). All 3 mcp__codex__codex calls go in a SINGLE assistant message so they execute in parallel. For tmux visibility: before dispatching, create the 3 project directories, then open a tmux session with 3 vertically-split panes each tailing that project's log file (e.g. `tail -F projects/<name>/codex.log`); the Codex prompts are instructed to append progress lines to that log so the user sees live activity in each pane. (Caveat: mcp__codex__codex runs in-process inside Claude Code, so the panes show log tails, not literal Codex TUIs \u2014 true Codex-TUI-per-pane would require shelling out `codex exec` per pane via tmux send-keys instead, which is the alternative if the user wants raw Codex output.)\n\nCOORDINATION: None needed at runtime \u2014 the 3 projects are fully independent (separate dirs, separate files, no shared imports), which is the textbook case for superpowers:dispatching-parallel-agents. No task list, no message bus, no shared state. I wait for all 3 Codex calls to return, then aggregate results. If one fails I re-dispatch only that one with the error context; the other two are unaffected.\n\nREVIEW: After all 3 return, for each project I (a) Read the module + tests, (b) run `pytest --cov=<module> --cov-report=term-missing` to confirm green + coverage on the small surfaces (target 100% per the financial/business rule for tiny utility modules), (c) sanity-check against Karpathy guidelines (no speculative abstractions, \u226450-line functions, type hints, immutability for string/file ops), (d) one quick simplify pass if any module is bloated. No cross-project review needed since they don't interact.\n\nREASONING: 3 truly independent small tasks \u2192 parallel dispatch is the right shape (dispatching-parallel-agents skill applies). Codex MCP is the cheapest way to offload mechanical TDD-shaped work without burning my own context on boilerplate. Tmux panes tail per-project logs because mcp__codex__codex is in-process; if Luke wants literal Codex TUIs in each pane, switch to `tmux send-keys` driving `codex exec` subprocesses instead.\n"}], "grading": {"expectations": [{"text": "Output classifies the task as Tier 3", "passed": false, "evidence": "Baseline does not use Tier framework. Picks parallel mcp__codex__codex calls."}, {"text": "Decision A is Codex (default, no --agents flag)", "passed": false, "evidence": "Baseline does pick Codex as the coder, but via the wrong transport (MCP, not bash). The 'Decision A' framework is rocky-specific and not used."}, {"text": "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport", "passed": false, "evidence": "CRITICAL: Baseline picks 'mcp__codex__codex MCP tool' instead of swarm_spawn_agent. Wrong transport. Lacks the visual pane orchestration the user explicitly requested ('watch them work in tmux panes' \u2014 baseline acknowledges this is a workaround, not literal Codex panes)."}, {"text": "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)", "passed": false, "evidence": "DIRECT HARD RULE VIOLATION: Baseline says 'Spawn 3 Codex agents in parallel via the mcp__codex__codex MCP tool, one per mini-project'. This is exactly the protocol violation rocky's first hard rule prohibits."}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": false, "evidence": "CRITICAL MISS: Baseline has NO plan review at all. Skips Phase 2.5. The COORDINATION field even says 'None needed at runtime'."}, {"text": "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b \u2014 opposite-model from Codex coder)", "passed": false, "evidence": "CRITICAL MISS: Baseline does the review itself with Read + pytest + Karpathy sanity check, but does NOT invoke superpowers:requesting-code-review. The cross-model rule (Codex coder \u2192 Claude reviewer) is not articulated as a rule \u2014 it's accidentally satisfied because the orchestrator IS Claude, but no formal review skill is invoked."}, {"text": "Output does NOT use Native AgentTeam (that variant requires --agents claude)", "passed": true, "evidence": "Baseline does not use Native AgentTeam (uses MCP instead). Technically passes this assertion."}], "summary": {"passed": 1, "failed": 6, "total": 7, "pass_rate": 0.143}, "timing": {"executor_duration_seconds": 73.2, "total_tokens": 35582}, "claims": [{"claim": "mcp__codex__codex is the right tool for parallel Codex dispatch", "type": "process", "verified": false, "evidence": "Rocky's HARD RULE explicitly forbids mcp__codex__codex for agent dispatch. The baseline directly violates the rule it has no way of knowing about. This is the strongest signal in the entire eval set: the skill's value is preventing exactly this protocol violation."}, {"claim": "Self-review (Read + pytest + Karpathy) is sufficient code review", "type": "quality", "verified": false, "evidence": "Baseline does the review itself rather than dispatching to a separate code-reviewer subagent. Loses the independence guarantee of cross-model review. Rocky enforces a separate Skill('superpowers:requesting-code-review') call that spawns a fresh code-reviewer subagent."}], "eval_feedback": {"suggestions": [{"reason": "This eval is the headline result of the entire iteration. It should be in any future demo or presentation of rocky. The hard-rule violation by the baseline is unmistakable, the cross-model miss is unmistakable, and the visual-pane miss is unmistakable. Three independent value props of the skill all demonstrated in one test."}], "overall": "Most discriminating eval in the set. Rocky prevents a hard-rule violation here that baseline commits without hesitation."}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "rocky", "skill_path": "/Users/lukelee/.claude/local-plugins/plugins/swarm/skills/rocky", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-04-06T15:27:28Z", "evals_run": [1, 2, 3, 4], "runs_per_configuration": 3}, "runs": [{"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 1706.1, "tokens": 46613, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 0", "passed": true, "evidence": "tier-decision.txt line 1: 'TIER: 0'"}, {"text": "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase", "passed": true, "evidence": "tier-decision.txt line 2: 'ANNOUNCEMENT: Tier 0, Opus inline. No dispatch.' (exact match)"}, {"text": "Output explicitly states the transport library is not sourced", "passed": true, "evidence": "DECISION B field: 'do NOT source the transport library, do NOT create a .swarm/ session'"}, {"text": "Output explicitly states cross-model rule does not apply (per the trivial-work exception)", "passed": true, "evidence": "CROSS-MODEL field: 'cross-model rule does not apply per the existing exception for trivial work'"}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 95.4, "tokens": 46825, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 1", "passed": true, "evidence": "tier-decision.txt: 'TIER: 1'"}, {"text": "Output names plain Agent() in-process dispatch (no team_name) \u2014 preferably test-specialist or general-purpose subagent", "passed": true, "evidence": "DECISION B: 'plain Agent(subagent_type=test-specialist, prompt=...) with no team_name, single in-process call'"}, {"text": "Output explicitly states this is a one-shot dispatch / no tmux pane", "passed": true, "evidence": "DECISION B: 'single in-process call, no tmux pane'"}, {"text": "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)", "passed": true, "evidence": "CROSS-MODEL: 'cross-model rule does not apply per the existing exception for mechanical work'"}, {"text": "Output does NOT escalate to a swarm session, panes, or wave dispatch", "passed": true, "evidence": "Stopped at Tier 1 per first-tier-that-fits rule; no .swarm/ session, no panes, no wave dispatch mentioned"}], "notes": []}, {"eval_id": 3, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 6, "failed": 0, "total": 6, "time_seconds": 88.9, "tokens": 47584, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 2", "passed": true, "evidence": "tier-decision.txt: 'TIER: 2'"}, {"text": "Decision A is Claude (honors --agents claude flag from 'use claude only')", "passed": true, "evidence": "DECISION A: 'Claude \u2014 user explicitly said \"use claude only ... keep it inside the same opus session\", which maps to the --agents claude flag, overriding the default Codex coder.'"}, {"text": "Decision B is in-process Skill('superpowers:subagent-driven-development') invocation", "passed": true, "evidence": "DECISION B: 'Opus invokes Skill(\"superpowers:subagent-driven-development\") directly in its own (this) session.'"}, {"text": "Output explicitly states NO tmux pane / NO swarm_spawn_agent / NO fresh Claude process", "passed": true, "evidence": "DECISION B: 'NO tmux pane is spawned, NO swarm_spawn_agent call, NO fresh Claude process \u2014 it is an in-process Skill invocation'"}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": true, "evidence": "CROSS-MODEL: 'Plan reviewer = Codex pane (always, per Phase 2.5 \u2014 spawned via swarm_spawn_agent to review the plan before Phase 3)'"}, {"text": "Output names Codex (cross-model) as the code reviewer via Phase 4.3a / superpowers:requesting-code-review", "passed": true, "evidence": "CROSS-MODEL: 'Code reviewer = Codex pane (opposite-model of the Claude coder, per Phase 4.3a \u2014 Codex pane invokes superpowers:requesting-code-review from ~/.codex/superpowers/skills/requesting-code-review/...'"}], "notes": []}, {"eval_id": 4, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 7, "failed": 0, "total": 7, "time_seconds": 80.0, "tokens": 47553, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 3", "passed": true, "evidence": "tier-decision.txt: 'TIER: 3'"}, {"text": "Decision A is Codex (default, no --agents flag)", "passed": true, "evidence": "DECISION A: 'Codex \u2014 no --agents flag passed, default coder identity for Tier 3 is Codex (per Decision A table: \"default \u2192 Codex\")'"}, {"text": "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport", "passed": true, "evidence": "DECISION B: 'Multiple Codex panes via swarm_spawn_agent in wave layout (Phase 3.3 wave dispatch, bash transport via swarm-transport.sh)'"}, {"text": "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)", "passed": true, "evidence": "DECISION B: 'NOT mcp__codex__codex (HARD RULE forbids MCP for dispatch)'"}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": true, "evidence": "CROSS-MODEL: 'Plan reviewer = Codex pane (Phase 2.5.2 spawns it \u2014 Codex pane is always the plan reviewer per the cross-model rule recap, regardless of coder identity)'"}, {"text": "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b \u2014 opposite-model from Codex coder)", "passed": true, "evidence": "CROSS-MODEL: 'Code reviewer = Claude Opus in-process via Skill(\"superpowers:requesting-code-review\") (Phase 4.3b) \u2014 because the coder is Codex, the opposite-model code reviewer is Claude Opus per the rule \"Codex coder \u2192 Claude reviews\"'"}, {"text": "Output does NOT use Native AgentTeam (that variant requires --agents claude)", "passed": true, "evidence": "DECISION B: 'NOT Native AgentTeam (that's the Tier 3 + --agents claude variant)'"}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.0, "passed": 0, "failed": 4, "total": 4, "time_seconds": 101.3, "tokens": 34534, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 0", "passed": false, "evidence": "Baseline does not use the Tier 0/1/2/3 framework \u2014 never mentions 'Tier'. The semantic decision (inline) is correct, but the rocky vocabulary is missing because no skill was loaded."}, {"text": "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase", "passed": false, "evidence": "Baseline output has no Phase 0.0 announcement \u2014 uses freeform text 'inline (Read + single Edit), no subagents, no review' instead."}, {"text": "Output explicitly states the transport library is not sourced", "passed": false, "evidence": "Baseline has no concept of a transport library \u2014 this is rocky-specific knowledge."}, {"text": "Output explicitly states cross-model rule does not apply (per the trivial-work exception)", "passed": false, "evidence": "Baseline does not invoke any cross-model rule \u2014 no mention. The implicit decision (no review) matches Tier 0 behavior, but the rule itself is not articulated."}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.2, "passed": 1, "failed": 4, "total": 5, "time_seconds": 104.1, "tokens": 34513, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 1", "passed": false, "evidence": "Baseline does not use Tier framework. Says 'Tier-1 task' in REASONING freeform but does not use it as a routing classifier."}, {"text": "Output names plain Agent() in-process dispatch (no team_name) \u2014 preferably test-specialist or general-purpose subagent", "passed": false, "evidence": "MECHANISM: 'Inline execution by myself' \u2014 baseline keeps it inline rather than dispatching to a focused subagent. This is actually one tier LIGHTER than rocky's recommendation (Tier 0 instead of Tier 1)."}, {"text": "Output explicitly states this is a one-shot dispatch / no tmux pane", "passed": false, "evidence": "Baseline says 'no parallelism' but does not articulate the dispatch shape in rocky's vocabulary."}, {"text": "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)", "passed": false, "evidence": "Baseline does not invoke cross-model rule \u2014 no mention. Self-review only."}, {"text": "Output does NOT escalate to a swarm session, panes, or wave dispatch", "passed": true, "evidence": "Baseline stayed inline \u2014 definitely no escalation. Correct semantic decision."}], "notes": []}, {"eval_id": 3, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.0, "passed": 0, "failed": 6, "total": 6, "time_seconds": 88.2, "tokens": 35133, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 2", "passed": false, "evidence": "Baseline does not use Tier framework. Picks 'Inline implementation in this same Opus session'."}, {"text": "Decision A is Claude (honors --agents claude flag from 'use claude only')", "passed": false, "evidence": "Baseline does honor 'use claude only' but does not articulate it as the Decision A Claude path \u2014 just chooses inline."}, {"text": "Decision B is in-process Skill('superpowers:subagent-driven-development') invocation", "passed": false, "evidence": "Baseline does NOT invoke superpowers:subagent-driven-development at all. Just plans inline TDD by hand. Loses the SDD discipline (implementer / spec-reviewer / quality-reviewer loop)."}, {"text": "Output explicitly states NO tmux pane / NO swarm_spawn_agent / NO fresh Claude process", "passed": false, "evidence": "Implicit (it's inline) but not stated in rocky's vocabulary."}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": false, "evidence": "CRITICAL MISS: Baseline has NO plan review. Skips Phase 2.5 entirely. The plan reviewer pane is mandatory for substantive features per the cross-model hard rule."}, {"text": "Output names Codex (cross-model) as the code reviewer via Phase 4.3a / superpowers:requesting-code-review", "passed": false, "evidence": "CRITICAL MISS: Baseline says 'No second model invoked because the user excluded Codex' \u2014 this misreads the user. The user excluded Codex CODERS, not Codex REVIEWERS. The skill correctly understands --agents claude controls coder identity, leaving Codex available for the cross-model code review."}], "notes": []}, {"eval_id": 4, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.143, "passed": 1, "failed": 6, "total": 7, "time_seconds": 73.2, "tokens": 35582, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Output classifies the task as Tier 3", "passed": false, "evidence": "Baseline does not use Tier framework. Picks parallel mcp__codex__codex calls."}, {"text": "Decision A is Codex (default, no --agents flag)", "passed": false, "evidence": "Baseline does pick Codex as the coder, but via the wrong transport (MCP, not bash). The 'Decision A' framework is rocky-specific and not used."}, {"text": "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport", "passed": false, "evidence": "CRITICAL: Baseline picks 'mcp__codex__codex MCP tool' instead of swarm_spawn_agent. Wrong transport. Lacks the visual pane orchestration the user explicitly requested ('watch them work in tmux panes' \u2014 baseline acknowledges this is a workaround, not literal Codex panes)."}, {"text": "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)", "passed": false, "evidence": "DIRECT HARD RULE VIOLATION: Baseline says 'Spawn 3 Codex agents in parallel via the mcp__codex__codex MCP tool, one per mini-project'. This is exactly the protocol violation rocky's first hard rule prohibits."}, {"text": "Output names Codex pane as the plan reviewer (Phase 2.5)", "passed": false, "evidence": "CRITICAL MISS: Baseline has NO plan review at all. Skips Phase 2.5. The COORDINATION field even says 'None needed at runtime'."}, {"text": "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b \u2014 opposite-model from Codex coder)", "passed": false, "evidence": "CRITICAL MISS: Baseline does the review itself with Read + pytest + Karpathy sanity check, but does NOT invoke superpowers:requesting-code-review. The cross-model rule (Codex coder \u2192 Claude reviewer) is not articulated as a rule \u2014 it's accidentally satisfied because the orchestrator IS Claude, but no formal review skill is invoked."}, {"text": "Output does NOT use Native AgentTeam (that variant requires --agents claude)", "passed": true, "evidence": "Baseline does not use Native AgentTeam (uses MCP instead). Technically passes this assertion."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 492.6, "stddev": 809.0246, "min": 80.0, "max": 1706.1}, "tokens": {"mean": 47143.75, "stddev": 498.1977, "min": 46613, "max": 47584}}, "without_skill": {"pass_rate": {"mean": 0.0857, "stddev": 0.1017, "min": 0.0, "max": 0.2}, "time_seconds": {"mean": 91.7, "stddev": 14.1471, "min": 73.2, "max": 104.1}, "tokens": {"mean": 34940.5, "stddev": 515.2918, "min": 34513, "max": 35582}}, "delta": {"pass_rate": "+0.91", "time_seconds": "+400.9", "tokens": "+12203"}}, "notes": []}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

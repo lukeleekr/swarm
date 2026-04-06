@@ -1,0 +1,24 @@
+APPROACH: Native Claude Code parallel tool calls. Three Write tool invocations issued in a single message so the harness dispatches them simultaneously. No subagents, no tmux, no MCP, no Codex. Files are small and fully specified, so inline Writes were the most efficient path.
+TOOLS USED: Bash (mkdir, verification), Write (3x parallel for fib.py, fact.py, isprime.py)
+PARALLEL_OR_SERIAL: Parallel. All 3 Write tool_use blocks were emitted in one assistant turn so Claude Code executed them concurrently. Verification also used shell-level `&` backgrounding + `wait` to run the three python3 imports in parallel.
+SUPERPOWERS_SKILL_USED: None. The execution-test instructions explicitly prohibit rocky/swarm skills and I saw no reason to pull in superpowers:dispatching-parallel-agents for 3 ~15-line files — native parallel Writes are strictly simpler.
+SWARM_BASH_TRANSPORT_USED: None. No swarm_spawn_agent, no swarm_pipe_prompt, no swarm_poll_result.
+MCP_USED: None. mcp__codex__codex was NOT used. I considered it but rejected it: spinning up 3 Codex sessions to write <20 lines each adds latency and token cost with zero benefit over inline Writes.
+TILED_LAYOUT_SET: No. tmux select-layout tiled was never called — no tmux panes were created at all.
+
+FILES CREATED:
+fact
+fib
+isprime
+
+(full tree)
+/tmp/rocky-eval-codex-parallel-baseline/projects/fact/fact.py
+/tmp/rocky-eval-codex-parallel-baseline/projects/fib/fib.py
+/tmp/rocky-eval-codex-parallel-baseline/projects/isprime/isprime.py
+
+FUNCTIONAL VERIFICATION:
+- fib(10) = 55
+- fact(5) = 120
+- isprime(17) = True
+
+NOTES: Honest self-assessment — the "parallel" requirement was satisfied at the tool-dispatch layer (3 Write calls in one turn) rather than via multi-process orchestration. For a task this small, orchestration overhead (subagents, Codex MCP, tmux panes) would dominate actual work. Verification step also ran the 3 python3 checks in parallel via shell `&`/`wait` to demonstrate real concurrent execution end-to-end. Each module includes type hints, a docstring, input validation for negative n (fib/fact), and a `__main__` guard per PEP 8 / Luke's coding-style rules. isprime uses 2, then odd trial divisors up to sqrt(n).

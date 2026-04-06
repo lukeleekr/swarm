@@ -1,0 +1,34 @@
+APPROACH: Fetched the diff with git, then invoked Codex directly via the mcp__codex__codex MCP tool to get a genuine cross-model review. Claude (me) wrote the original code, so I handed the diff to GPT-5.x via Codex MCP rather than reviewing it myself. No skill was used — just raw tools.
+
+TOOLS USED: Bash (git log + git diff, ls), mcp__codex__codex (to delegate the review to a different model), Write (to save the result).
+
+CROSS_MODEL_INVOKED: Yes — genuinely. I called mcp__codex__codex with sandbox=read-only, approval-policy=never, cwd=/tmp/rocky-eval-codereview, and passed the diff inline. Codex returned a thread id (019d6375-b37b-7733-b1c5-34756fe2e2fe) and a structured review. The review below is Codex's output verbatim, not mine.
+
+SUPERPOWERS_SKILL_USED: No. I did not invoke superpowers:requesting-code-review or any superpowers skill. The task said to solve it with default Claude Code tools, so I went straight to the Codex MCP tool.
+
+REVIEW PRODUCED:
+Status: REQUEST_CHANGES
+
+Strengths
+- multiply(a, b) is straightforward and consistent with the existing arithmetic helpers.
+- The diff is small and easy to reason about.
+
+Issues
+- HIGH  app.py:8 — The commit explicitly documents a known bug in divide() (`# BUG: no zero check`) but does not fix it. Shipping code that acknowledges broken behavior without addressing it is not acceptable review-wise.
+- LOW   app.py:8 — The inline BUG comment adds noise and technical debt. Comments should explain intent, not leave known defects in place.
+
+Suggested fix snippet
+```python
+def divide(a, b):
+    if b == 0:
+        raise ZeroDivisionError('division by zero')
+    return a / b
+
+
+def multiply(a, b):
+    return a * b
+```
+
+If tests exist, add coverage for divide(?, 0) and multiply().
+
+NOTES: Rocky (swarm) would have routed this through a manager → reviewer pipeline, probably spawning a dedicated reviewer agent with its own prompt scaffolding and possibly parallel reviewers. The raw mcp__codex__codex path is much lighter: one MCP round-trip, no task list, no team, no handoff. Trade-off is no structured persistence or multi-reviewer consensus — but for a 6-line diff it's the right weight. The Codex review correctly flagged the divide-by-zero as HIGH and the self-documenting-bug comment as LOW, which matches what I'd expect a good reviewer to catch. I did NOT inject my own opinions into the review — it's Codex's output verbatim to keep the cross-model signal clean.

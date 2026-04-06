@@ -1,0 +1,28 @@
+{
+  "expectations": [
+    {"text": "Codex pane spawned and stayed alive across all 4 turns (r0 + r1 + r2 + r3)", "passed": true, "evidence": "Pane %65 'Codex-PushbackV2' spawned via swarm_spawn_agent, all 4 piped prompts succeeded, pane killed cleanly via swarm_kill_agent at end"},
+    {"text": "Round 0 produced a NEEDS_REVISION review listing multiple ambiguities", "passed": true, "evidence": "r0 (2464 bytes) listed 6 distinct issues: feasibility, task-001 spec gap (5 sub-issues), task-002 spec gap (4 sub-issues), verification gap, integration risk, dependency ordering OK"},
+    {"text": "Round 1 pushback produced a NEW review with concrete proposals for each ambiguity", "passed": true, "evidence": "r1 (1625 bytes) gave 7 concrete proposals — SQLite, run() function, single stdout line, schema details, @dataclass, field mapping, idempotence verification"},
+    {"text": "Round 2 pushback produced a NEW review with a concrete shell verification command", "passed": true, "evidence": "r2 (1394 bytes) included a complete shell recipe with rm + 2 migration runs + Python heredoc verifying table count and columns + grep checks for 'already exists'"},
+    {"text": "Round 3 pushback produced a NEW review picking ONE stack for both tasks with explicit field-mapping contracts", "passed": true, "evidence": "r3 (2160 bytes) picked Python+SQLite+SQLAlchemy 2.x for both tasks, spelled out task-001 SQLAlchemy Core contract and task-002 SQLAlchemy ORM contract with explicit Mapped[type] field declarations"},
+    {"text": "All 4 review files are distinct (different sizes, different content)", "passed": true, "evidence": "r0=2464, r1=1625, r2=1394, r3=2160 bytes — all distinct sizes. Content inspection confirms each round addresses a different topic."},
+    {"text": "Each round was responsive to its specific concern (not a copy-paste of the previous round)", "passed": true, "evidence": "r1 directly addresses 'propose concrete recommendations' (the r1 prompt), r2 directly addresses 'verification recipe' (the r2 prompt), r3 directly addresses 'cross-task dependency consistency' (the r3 prompt). Codex's responsiveness is 100%."},
+    {"text": "Each round built on the previous round's content (Codex maintained context)", "passed": true, "evidence": "r2's recipe uses the column definitions from r1. r3 picks a stack and ADAPTS the r2 recipe to the new SQLAlchemy column types. Codex visibly retained context across all 4 turns within one pane session."},
+    {"text": "The pane was killed cleanly on completion", "passed": true, "evidence": "swarm_kill_agent %65 returned successfully; pane no longer in tmux list-panes after"},
+    {"text": "After round 3, escalation to the user would fire per the hard rule", "passed": true, "evidence": "The hard rule documents the escalation message format. This test stopped at round 3 by design (mechanism test, not real plan review). The escalation path is straightforward: after round 3, present the remaining NOT_ASSURED items to the user with the documented prompt."}
+  ],
+  "summary": {"passed": 10, "failed": 0, "total": 10, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 540, "note": "Roughly 9 min wall time: ~60s for spawn/wait, then 4 turns × ~120s each (Codex processing time per pushback)"},
+  "claims": [
+    {"claim": "The Phase 2.5.3.5 pushback template is sufficient to drive useful revisions from Codex", "type": "process", "verified": true, "evidence": "Each pushback prompt followed the format 'Round R/3 — pushback: I am not assured. Specific concern: [exact issue]. Re-read [target], address, update [path].' Codex responded to all 3 pushbacks with substantive distinct revisions."},
+    {"claim": "Codex maintains conversation context across multiple turns within one pane session", "type": "factual", "verified": true, "evidence": "r3 explicitly references and adapts the verification recipe from r2 (with new column types). r1 explicitly references the ambiguities Codex itself listed in r0. Cross-turn context retention is observable."},
+    {"claim": "Per-round result files (r0/r1/r2/r3) preserve the audit trail", "type": "process", "verified": true, "evidence": "Using unique filenames per round (instead of overwriting one plan-review-standard.result file across rounds) lets the orchestrator compare reviews and verify each pushback was responsive. Recommend the rocky skill use this pattern."}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "The rocky skill should explicitly recommend per-round result filenames (plan-review-r0.result, plan-review-r1.result, etc.) so the orchestrator has an audit trail of all pushback rounds. The current skill writes everything to a single plan-review-standard.result file which gets overwritten — losing the per-round history."},
+      {"reason": "macOS does not have `timeout` by default. The skill's example bash code should use a manual polling loop (for ((i=0;i<150;i++))) or `gtimeout` instead of `timeout`. I've encountered this twice in iter-2 testing."}
+    ],
+    "overall": "Strongest positive signal in iter-2 — the pushback hard rule mechanism is verified end-to-end and Codex's responsiveness is excellent. Worth turning into a permanent regression test for any future swarm-transport changes."
+  }
+}

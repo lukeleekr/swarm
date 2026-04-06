@@ -1,0 +1,31 @@
+{
+  "expectations": [
+    {
+      "text": "Output classifies the task as Tier 1",
+      "passed": true,
+      "evidence": "tier-decision.txt: 'TIER: 1'"
+    },
+    {
+      "text": "Output names plain Agent() in-process dispatch (no team_name) — preferably test-specialist or general-purpose subagent",
+      "passed": true,
+      "evidence": "DECISION B: 'plain Agent(subagent_type=test-specialist, prompt=...) with no team_name, single in-process call'"
+    },
+    {
+      "text": "Output explicitly states this is a one-shot dispatch / no tmux pane",
+      "passed": true,
+      "evidence": "DECISION B: 'single in-process call, no tmux pane'"
+    },
+    {
+      "text": "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)",
+      "passed": true,
+      "evidence": "CROSS-MODEL: 'cross-model rule does not apply per the existing exception for mechanical work'"
+    },
+    {
+      "text": "Output does NOT escalate to a swarm session, panes, or wave dispatch",
+      "passed": true,
+      "evidence": "Stopped at Tier 1 per first-tier-that-fits rule; no .swarm/ session, no panes, no wave dispatch mentioned"
+    }
+  ],
+  "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 95.4, "total_tokens": 46825}
+}

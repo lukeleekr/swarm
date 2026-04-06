@@ -1,0 +1,56 @@
+TEST: Tier 3 Claude parallel via Native AgentTeam (Phase 3.2.2)
+TEAM_CREATE_INVOKED: yes (team_name="rocky-eval9", returned team_file_path /Users/lukelee/.claude/teams/rocky-eval9/config.json, leadAgentId team-lead@rocky-eval9)
+AGENT_CALLS_INVOKED: 0/3 — the `Agent` tool is NOT available in this subagent context. The general-purpose subagent's toolset includes TeamCreate, TeamDelete, SendMessage, Task* tools, Bash/Read/Write/Edit, etc., but NO `Agent` tool capable of spawning Claude teammates via `Agent(subagent_type=..., team_name=..., name=..., prompt=...)`. The harness exposes `Agent(team_name=...)` only to the top-level orchestrator session — not to subagents.
+TEAMMATE_NAMES: n/a — no teammates spawned. Only the auto-created team-lead@rocky-eval9 member existed in config.json
+TILE_CALL_EXECUTED_AFTER_SPAWN: yes — ran `tmux select-layout tiled 2>/dev/null || true` after TeamCreate + (attempted) spawn phase. Ran again after TeamDelete.
+NATIVE_AGENTTEAM_USED: partial — TeamCreate and TeamDelete DO work from a subagent, but Agent(team_name=...) spawn cannot be invoked because the Agent tool is not in the subagent's toolset. This is NOT a bash-spawned claude, NOT swarm_spawn_agent — there simply was no way to spawn Claude teammates from this context via the native API.
+
+AGENT CALL RETURNS / NOTIFICATIONS:
+- Coder-1: n/a — no Agent call could be made (Agent tool unavailable in subagent toolset)
+- Coder-2: n/a — same reason
+- Coder-3: n/a — same reason
+
+RESULT FILE CONTENTS:
+(Note: these .result files were written by the orchestrator subagent itself as a fallback after the Native AgentTeam spawn attempt failed due to the Agent tool being unavailable. The three .py modules were also implemented directly by the subagent to produce verifiable functional artifacts. This is NOT the Tier 3 parallel dispatch pattern — this is a single-actor fallback.)
+
+--- task-001.result ---
+Status: DONE
+Files Changed: projects/slug/slug.py
+Summary: Implemented slugify() with empty-string handling, lowercase, hyphen collapse, and non-alphanumeric stripping.
+
+--- task-002.result ---
+Status: DONE
+Files Changed: projects/trunc/trunc.py
+Summary: Implemented truncate(s, n) with empty-string handling, n<=0 guard, and ellipsis suffix when s exceeds n chars.
+
+--- task-003.result ---
+Status: DONE
+Files Changed: projects/norm/norm.py
+Summary: Implemented normalize() with empty-string handling and regex-based whitespace collapse + strip.
+
+FILES CREATED:
+/tmp/rocky-eval-claude-parallel/projects/norm/:
+  -rw-r--r-- 1 lukelee wheel 329 norm.py
+/tmp/rocky-eval-claude-parallel/projects/slug/:
+  -rw-r--r-- 1 lukelee wheel 369 slug.py
+/tmp/rocky-eval-claude-parallel/projects/trunc/:
+  -rw-r--r-- 1 lukelee wheel 421 trunc.py
+
+FUNCTIONAL VERIFICATION:
+- slugify("Hello World!") = hello-world  (matches expected "hello-world")
+- truncate("hello world", 5) = hello...  (reasonable ellipsis form)
+- normalize("  hello   world  ") = 'hello world'  (matches expected "hello world")
+
+CLEANUP_INVOKED: yes — TeamDelete() returned {"success":true,"message":"Cleaned up directories and worktrees for team \"rocky-eval9\""}. SendMessage shutdown_request calls to Coder-1/2/3 were SKIPPED because no teammates were ever spawned (no Agent tool). Only team-lead was in the team and TeamDelete cleanly removed the team directory.
+RE_TILED_AFTER_KILL: yes — `tmux select-layout tiled 2>/dev/null || true` executed after TeamDelete.
+
+SUMMARY:
+Tier 3 Claude parallel dispatch via Native AgentTeam FAILED from a subagent context — not due to a runtime error, but because the `Agent` tool required for spawning teammates via `Agent(team_name=...)` is not exposed to general-purpose subagents by the harness. TeamCreate/TeamDelete/SendMessage ARE available from a subagent, but without the Agent spawn tool, the Native AgentTeam pattern is incomplete. To preserve verifiable artifacts, the subagent produced the three modules and .result files itself as a fallback — the functional verification passes (slugify/truncate/normalize all return expected values), but the parallelism and "3 Claude teammates in tmux panes" aspect of the test could not be demonstrated from this context.
+
+KNOWN_LIMITATIONS_OR_QUIRKS_DISCOVERED:
+1. **Agent tool scope**: The `Agent(subagent_type=..., team_name=..., name=..., prompt=...)` tool is a top-level-orchestrator-only capability. A general-purpose subagent spawned via the same harness gets TeamCreate, TeamDelete, and SendMessage but NOT Agent. This means Native AgentTeam's spawn step cannot be transitively delegated to a subagent — only the top-level Claude Code session can spawn Claude teammates.
+2. **Implication for swarm skill**: When the swarm rocky skill runs as a subagent (e.g., invoked via Skill tool from an outer orchestrator), Phase 3.2.2's Native AgentTeam path is not reachable. The skill must either (a) run at the top level, or (b) fall back to bash-spawned `claude --dangerously-skip-permissions` panes via swarm_spawn_agent, accepting the trust-prompt and CLI cold-start tax the skill was designed to avoid.
+3. **TeamCreate/TeamDelete DO work from subagent**: The team config file was created at ~/.claude/teams/rocky-eval9/config.json with a lead-agent entry, and TeamDelete successfully cleaned up the directory. So partial Native AgentTeam machinery is reachable — only the Agent spawn step is blocked.
+4. **SendMessage available but no recipient**: SendMessage was in the toolset and would have worked, but with no teammates to message it could not be used for shutdown_request.
+5. **No error string produced**: Because Agent is simply absent from the tool schema (not a runtime-rejected call), there is no EXACT error message to quote. The "error" is structural: the tool never appeared in the available-tools list for this subagent.
+6. **Panes not visible**: Since no Agent spawn happened, no tmux panes were created for teammates. The tile command was a no-op for teammates (the orchestrator+subagent panes were the only ones present).

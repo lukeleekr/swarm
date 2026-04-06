@@ -1,0 +1,28 @@
+{
+  "expectations": [
+    {"text": "TeamCreate succeeded (returns team_file_path)", "passed": true, "evidence": "TeamCreate returned {team_name: 'rocky-eval9b', team_file_path: '/Users/lukelee/.claude/teams/rocky-eval9b/config.json', lead_agent_id: 'team-lead@rocky-eval9b'}"},
+    {"text": "Three Agent(team_name=...) calls with subagent_type=general-purpose, name=Coder-1/2/3 all returned 'Spawned successfully'", "passed": true, "evidence": "All 3 Agent calls returned 'Spawned successfully' with agent_id Coder-N@rocky-eval9b"},
+    {"text": "Three new tmux panes appeared for the teammates", "passed": true, "evidence": "Panes %60, %61, %62 visible immediately after the spawn batch"},
+    {"text": "tmux select-layout tiled produced a 2x2 grid (Claude orchestrator + 3 teammates)", "passed": true, "evidence": "tmux list-panes after select-layout tiled: 4 panes in 2x2 layout (199x52 → 99x25/99x25/99x26/99x26)"},
+    {"text": "All 3 .result files were written with Status: DONE within ~5 seconds", "passed": true, "evidence": "Polling: t=0s shows 2/3 result files; t=5s shows 3/3. Wall time under 5 seconds — extremely fast for 3 parallel teammates."},
+    {"text": "All 3 module files exist and are functionally correct", "passed": true, "evidence": "slug.py, trunc.py, norm.py all present at /tmp/rocky-eval-claude-parallel/projects/"},
+    {"text": "slugify('Hello World!') returns 'hello-world'", "passed": true, "evidence": "Functional check: slugify('Hello World!') = 'hello-world'"},
+    {"text": "truncate('hello world', 5) returns 'hello...'", "passed": true, "evidence": "Functional check: truncate('hello world', 5) = 'hello...'"},
+    {"text": "normalize('  hello   world  ') returns 'hello world'", "passed": true, "evidence": "Functional check: normalize('  hello   world  ') = 'hello world'"},
+    {"text": "SendMessage shutdown_request was successfully sent to all 3 teammates", "passed": true, "evidence": "All 3 SendMessage calls returned success with request_ids"},
+    {"text": "TeamDelete cleaned up the team config (note: did NOT auto-kill all teammate panes — manual kill needed for Coder-1)", "passed": true, "evidence": "TeamDelete returned 'Cleaned up directories and worktrees for team rocky-eval9b'. Coder-1 pane (%60) needed manual tmux kill-pane after — documented as a quirk in the test result file"}
+  ],
+  "summary": {"passed": 11, "failed": 0, "total": 11, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 5.0, "note": "3 teammates completed in ~5s wall time — Native AgentTeam is dramatically faster than swarm bash transport (Codex panes need 60s+ cold-start)"},
+  "claims": [
+    {"claim": "Native AgentTeam Tier 3 Claude parallel works end-to-end from the PARENT (top-level) Claude Code session", "type": "process", "verified": true, "evidence": "TeamCreate + 3 Agent(team_name=...) parallel + tile + poll + functional verification + cleanup all succeeded. The canonical Phase 3.2.2 path works."},
+    {"claim": "Native AgentTeam is dramatically faster than swarm bash Codex panes for Claude work", "type": "factual", "verified": true, "evidence": "5 seconds (eval-9b parent / Native AgentTeam) vs 165s (eval-8 / Codex bash transport). 33x speedup. Of course these are different workloads (Claude teammates vs Codex coders) so the comparison is apples-to-oranges, but the Claude path is clearly low-overhead."},
+    {"claim": "TeamDelete does not always kill teammate panes", "type": "process", "verified": true, "evidence": "Coder-1 (%60) survived TeamDelete and required manual tmux kill-pane. Coder-2 and Coder-3 panes died cleanly. Quirk worth documenting in the rocky skill."}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "This is the canonical positive test for Phase 3.2.2. Should be the default Tier 3 Claude execution test. eval-9 (subagent context) is now the documented constraint test."}
+    ],
+    "overall": "Strongest positive signal in iteration-2 — Native AgentTeam works end-to-end at the top level, exactly as the rocky skill documents. Combined with eval-9, the constraint and the happy path are both fully characterized."
+  }
+}

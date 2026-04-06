@@ -1,0 +1,10 @@
+TIER: 0
+ANNOUNCEMENT: Tier 0, Opus inline. No dispatch.
+SIGNALS WALKED:
+  Tier 0: fits — task is ≤20 LOC (1 character change), 1 file (/tmp/notes.md), mechanical (typo fix 'reciever' -> 'receiver'), file is <200 lines to read (12 lines total), no design judgment required. All Tier 0 signals satisfied.
+  Tier 1: N/A (Tier 0 already fits; tie-breaker says pick the LOWER tier)
+  Tier 2: N/A
+  Tier 3: N/A
+DECISION A: N/A (Tier 0 — no coder identity needed; Opus does the work directly)
+DECISION B: N/A (Tier 0 — no dispatch mechanism; do NOT source the transport library, do NOT create a .swarm/ session)
+CROSS-MODEL: N/A (Tier 0 — cross-model rule does not apply per the existing exception for trivial work)

@@ -1,0 +1,17 @@
+{
+  "eval_id": 3,
+  "eval_name": "tier2-claude-sdd-jwt-auth",
+  "prompt": "implement user authentication with JWT for our FastAPI service. need: User model with email+password, password hashing via argon2, JWT generation/verification, 5 endpoints (signup, login, logout, refresh, me), auth middleware, and tests for each endpoint. use claude only - i don't want to spawn codex panes for this one, keep it inside the same opus session",
+  "expected_tier": 2,
+  "expected_decision_a": "Claude (--agents claude)",
+  "expected_decision_b": "Skill('superpowers:subagent-driven-development') in-process",
+  "expected_announcement_pattern": "Tier 2, Claude SDD",
+  "assertions": [
+    "Output classifies the task as Tier 2",
+    "Decision A is Claude (honors --agents claude flag from 'use claude only')",
+    "Decision B is in-process Skill('superpowers:subagent-driven-development') invocation",
+    "Output explicitly states NO tmux pane / NO swarm_spawn_agent / NO fresh Claude process",
+    "Output names Codex pane as the plan reviewer (Phase 2.5)",
+    "Output names Codex (cross-model) as the code reviewer via Phase 4.3a / superpowers:requesting-code-review"
+  ]
+}

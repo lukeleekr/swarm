@@ -1,0 +1,24 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent called TeamCreate to create a swarm-* team", "passed": false, "evidence": "Baseline did not call TeamCreate. APPROACH: 'Inline parallel Write calls'"},
+    {"text": "With-skill subagent called Agent(team_name=..., name=...) for at least one teammate", "passed": false, "evidence": "NATIVE_AGENTTEAM_USED: 'No. TeamCreate + Agent(team_name=...) was not called.'"},
+    {"text": "All 3 teammates were dispatched", "passed": false, "evidence": "No teammates dispatched. Baseline wrote files directly."},
+    {"text": "All 3 .result files were written with Status: DONE", "passed": false, "evidence": "Baseline wrote baseline-result.txt instead, not the swarm-protocol .result files"},
+    {"text": "All 3 module files exist", "passed": true, "evidence": "slug.py, trunc.py, norm.py all exist at /tmp/rocky-eval-claude-parallel-baseline/projects/"},
+    {"text": "slugify('Hello World!') returns 'hello-world' or close", "passed": true, "evidence": "Baseline verification: slugify('Hello World!') = 'hello-world'"},
+    {"text": "truncate('hello world', 5) returns 'hello...' or 'he...'", "passed": false, "evidence": "Baseline verification: truncate('hello world', 5) = 'hello' (NO ELLIPSIS — baseline interpreted spec literally per Karpathy 'no features beyond what was asked'). The assertion expected an ellipsis-aware truncate; baseline produced a strict-cut truncate. Either is defensible from the spec, but the assertion text included 'with ellipsis' implicitly."},
+    {"text": "normalize('  hello   world  ') returns 'hello world'", "passed": true, "evidence": "Baseline verification: normalize('  hello   world  ') = 'hello world'"},
+    {"text": "With-skill subagent called TeamDelete on cleanup", "passed": false, "evidence": "No team to delete"}
+  ],
+  "summary": {"passed": 3, "failed": 6, "total": 9, "pass_rate": 0.333},
+  "timing": {"executor_duration_seconds": 74.1, "total_tokens": 39489},
+  "claims": [
+    {"claim": "Inline parallel Write is the most efficient path for 3 trivial files (no agent overhead)", "type": "process", "verified": true, "evidence": "Baseline finished in 74s without any orchestration overhead. The skill's value here is NOT speed — it's the visible-team-of-coders user experience the user explicitly asked for ('have 3 Claude agents in parallel... I want to watch them work')."}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "The truncate spec was ambiguous about ellipsis. Baseline interpreted it literally (no ellipsis) per Karpathy. With-skill teammates added the ellipsis. Both are defensible. The assertion should be either 'truncate truncates to ≤n chars' (passes both) OR 'truncate adds ellipsis when truncated' (fails baseline). Currently it implies the latter."}
+    ],
+    "overall": "Useful eval but the truncate assertion is fuzzy. The headline finding is the same as eval-8: baseline avoids spawning anything, gets the work done, but doesn't satisfy the user's 'visible team' request."
+  }
+}

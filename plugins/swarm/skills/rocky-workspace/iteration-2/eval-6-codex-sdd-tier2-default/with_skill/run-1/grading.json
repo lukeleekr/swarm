@@ -1,0 +1,18 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": true, "evidence": "Pane %54 'rocky-eval-sdd' created in correct cwd via swarm_spawn_agent"},
+    {"text": "With-skill subagent spawned a real Codex pane via swarm_spawn_agent", "passed": true, "evidence": "Pane %54 visible during the run; Codex's SDD output was visible in real-time"},
+    {"text": "With-skill subagent piped a prompt mentioning 'superpowers:subagent-driven-development'", "passed": true, "evidence": "Codex's result.md mentions 'a spec-review subagent flagged ambiguity around unspecified negative-input behavior' — proves the SDD skill loaded its sub-roles"},
+    {"text": "Codex actually loaded the Superpowers SDD skill (verified by SDD output structure: implementer step + test step)", "passed": true, "evidence": "(1) Codex spawned an internal spec-review subagent (per its own report). (2) The implementation includes a ValueError guard for negative inputs that wasn't in the spec — this is the implementer responding to the spec-reviewer's finding, exactly the SDD self-corrective pattern. (3) The result format follows the SDD result template (Status / Files Changed / Summary)"},
+    {"text": "A result.md file was written by Codex with Status: DONE", "passed": true, "evidence": "/tmp/rocky-eval-sdd/.swarm/sess-eval6/result.md starts with 'Status: DONE' (489 bytes)"},
+    {"text": "fib.py exists in /tmp/rocky-eval-sdd with a working fib(n) function", "passed": true, "evidence": "/tmp/rocky-eval-sdd/fib.py contains an iterative fib(n) implementation with negative-input guard"},
+    {"text": "test_fib.py exists with at least 3 pytest cases", "passed": true, "evidence": "/tmp/rocky-eval-sdd/test_fib.py has test_fib_0, test_fib_1, test_fib_10 — all 3 pytest cases"},
+    {"text": "With-skill subagent killed the Codex pane on cleanup", "passed": true, "evidence": "Pane %54 killed manually after results harvested (orchestrating subagent was rejected; cleanup completed by parent)"}
+  ],
+  "summary": {"passed": 8, "failed": 0, "total": 8, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 240.0, "note": "Codex SDD took ~4 min (longest of the iter-2 evals); wall time dominated by Codex internally running implementer + spec-reviewer + quality-reviewer subroles"},
+  "claims": [
+    {"claim": "Codex spawned its own internal SDD subroles (implementer / spec-reviewer / quality-reviewer)", "type": "process", "verified": true, "evidence": "Codex's result.md explicitly references 'a spec-review subagent' which is part of the SDD skill's internal loop. This is unique to Codex loading the Superpowers SDD skill — a freeform implementation prompt would not produce this signal."},
+    {"claim": "pytest 3 passed in 0.00s with the implementation Codex produced", "type": "factual", "verified": true, "evidence": "Direct pytest run: '3 passed in 0.00s' — output captured in /tmp/rocky-eval-sdd"}
+  ]
+}

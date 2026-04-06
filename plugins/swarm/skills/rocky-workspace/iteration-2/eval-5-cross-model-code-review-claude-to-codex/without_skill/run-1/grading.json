@@ -1,0 +1,22 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": false, "evidence": "Baseline did NOT source swarm-transport.sh. APPROACH field: 'invoked Codex directly via the mcp__codex__codex MCP tool'"},
+    {"text": "With-skill subagent spawned a real Codex pane via swarm_spawn_agent", "passed": false, "evidence": "Baseline did NOT spawn a tmux pane. Used the mcp__codex__codex tool instead — which the rocky HARD RULE explicitly forbids for agent dispatch"},
+    {"text": "With-skill subagent piped a prompt mentioning 'superpowers:requesting-code-review'", "passed": false, "evidence": "SUPERPOWERS_SKILL_USED field: 'No. I did not invoke superpowers:requesting-code-review or any superpowers skill'"},
+    {"text": "Codex actually loaded the Superpowers requesting-code-review skill", "passed": false, "evidence": "Codex was given a freeform review prompt via MCP — it did review the diff but did NOT auto-load the Superpowers skill (skill activation requires the skill name to appear in the prompt). The output uses 'REQUEST_CHANGES' (not 'NEEDS_REVISION') and uses HIGH/LOW severity buckets (not Critical/Important/Minor) — different output schema than the skill produces"},
+    {"text": "A review.result file was written by Codex with Status: APPROVED or NEEDS_REVISION format", "passed": false, "evidence": "Baseline saved its review to baseline-result.txt with 'Status: REQUEST_CHANGES' — neither the file path nor the status keyword match the skill's output format"},
+    {"text": "Review identified the missing zero-check bug in divide() OR the missing test for multiply()", "passed": true, "evidence": "Codex (via MCP) correctly flagged 'HIGH app.py:8 — The commit explicitly documents a known bug in divide() but does not fix it'"},
+    {"text": "With-skill subagent killed the Codex pane on cleanup", "passed": false, "evidence": "No pane was spawned, so nothing to kill. N/A but counted as fail since the assertion isn't satisfied affirmatively"}
+  ],
+  "summary": {"passed": 1, "failed": 6, "total": 7, "pass_rate": 0.143},
+  "timing": {"executor_duration_seconds": 78.0, "total_tokens": 37406},
+  "claims": [
+    {"claim": "mcp__codex__codex is an acceptable substitute for swarm_spawn_agent + Phase 4.3a", "type": "process", "verified": false, "evidence": "Functionally Codex did review the diff and caught the bug. But the rocky HARD RULE explicitly prohibits mcp__codex__codex for agent dispatch — using it bypasses the visual pane orchestration and is a protocol violation. The baseline got the right answer via the wrong mechanism."}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "The baseline DID get a real cross-model review (via MCP) and DID catch the same bug. The skill's value here is NOT the bug-catching capability — it's the protocol enforcement (no MCP, visible panes, structured output format compatible with the swarm result protocol). The eval should make this distinction clearer."}
+    ],
+    "overall": "Discriminating — baseline gets the same bug-finding outcome via a forbidden mechanism. The skill enforces the protocol; baseline doesn't know about it."
+  }
+}

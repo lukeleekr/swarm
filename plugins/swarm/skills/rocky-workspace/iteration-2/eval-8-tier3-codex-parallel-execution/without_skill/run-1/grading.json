@@ -1,0 +1,25 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": false, "evidence": "Baseline did not source the lib. APPROACH: 'Native Claude Code parallel tool calls. Three Write tool invocations issued in a single message'"},
+    {"text": "With-skill subagent spawned 3 separate Codex panes via swarm_spawn_agent (NOT mcp__codex__codex)", "passed": false, "evidence": "MCP_USED: 'None. mcp__codex__codex was NOT used.' SWARM_BASH_TRANSPORT_USED: 'None.' Baseline used parallel inline Write calls — no Codex panes at all."},
+    {"text": "Each Codex pane received a different task file via swarm_pipe_prompt", "passed": false, "evidence": "No panes, no swarm_pipe_prompt"},
+    {"text": "All 3 .result files were written with Status: DONE", "passed": false, "evidence": "Baseline wrote baseline-result.txt instead. Did not produce .result files in the swarm protocol."},
+    {"text": "All 3 module files exist: projects/fib/fib.py, projects/fact/fact.py, projects/isprime/isprime.py", "passed": true, "evidence": "Baseline created all 3 files at /tmp/rocky-eval-codex-parallel-baseline/projects/{fib,fact,isprime}/. (Different fixture path from with-skill — both produced the same set of files via different mechanisms)"},
+    {"text": "fib(10) returns 55", "passed": true, "evidence": "Baseline verification: fib(10) = 55"},
+    {"text": "fact(5) returns 120", "passed": true, "evidence": "fact(5) = 120"},
+    {"text": "isprime(17) returns True", "passed": true, "evidence": "isprime(17) = True"},
+    {"text": "All 3 panes were killed on cleanup", "passed": false, "evidence": "No panes existed"}
+  ],
+  "summary": {"passed": 4, "failed": 5, "total": 9, "pass_rate": 0.444},
+  "timing": {"executor_duration_seconds": 58.3, "total_tokens": 38353},
+  "claims": [
+    {"claim": "Parallel Write tool calls satisfy 'parallel' for tiny independent tasks", "type": "process", "verified": true, "evidence": "Baseline finished in 58s (~3x faster than swarm panes) by using 3 parallel Writes in one message. For 3 ~15-line files, this is functionally equivalent and much cheaper than spinning up Codex panes. The skill's value is NOT speed — it's: (a) visible orchestration, (b) protocol uniformity, (c) cross-model review, (d) refusal to use MCP."},
+    {"claim": "Tiled layout enforcement is not relevant when no panes are created", "type": "process", "verified": true, "evidence": "TILED_LAYOUT_SET: No. Baseline never called select-layout because no tmux activity occurred. Compare to with-skill which produced a 2x2 grid."}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "For TINY tasks (<20 LOC each), Tier 3 swarm dispatch is overkill. Phase 0.0's Tier 0/1 should pre-empt this case. But the user explicitly asked for 'have 3 codex agents... in parallel... watch them work in tmux panes' — that's a Tier 3 tie-breaker even for trivial tasks (per the skill's tie-breakers section). The eval correctly tests the Tier 3 path despite the work being small."}
+    ],
+    "overall": "The baseline's 'parallel Write' approach is a legitimate alternative for trivial work. Rocky's Tier 3 path adds value when (a) the user wants visible panes, (b) cross-model review is required, (c) tasks are non-trivial. For this eval the bar is lower — and baseline still meets the functional bar."
+  }
+}

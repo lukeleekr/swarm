@@ -1,0 +1,22 @@
+{
+  "eval_id": 10,
+  "eval_name": "tier3-claude-parallel-from-parent",
+  "prompt": "Same as eval-9 but executed from the PARENT (top-level) Claude Code session instead of from a subagent. Verifies Native AgentTeam dispatch from the position rocky is actually invoked at.",
+  "expected_tier": "Phase 3.2.2 Tier 3 Claude parallel \u2014 Native AgentTeam from top-level orchestrator",
+  "fixture_dir": "/tmp/rocky-eval-claude-parallel",
+  "session_dir": "/tmp/rocky-eval-claude-parallel/.swarm/sess-test-cl",
+  "context": "eval-9 (subagent) discovered that Agent(team_name=...) is not exposed to general-purpose subagents \u2014 only the top-level orchestrator. eval-9b confirms the top-level path actually works end-to-end so we know Phase 3.2.2 is reachable when /swarm:rocky is invoked at the top level (the typical case).",
+  "assertions": [
+    "TeamCreate succeeded (returns team_file_path)",
+    "Three Agent(team_name=...) calls with subagent_type=general-purpose, name=Coder-1/2/3 all returned 'Spawned successfully'",
+    "Three new tmux panes appeared for the teammates",
+    "tmux select-layout tiled produced a 2x2 grid (Claude orchestrator + 3 teammates)",
+    "All 3 .result files were written with Status: DONE within ~5 seconds",
+    "All 3 module files exist and are functionally correct",
+    "slugify('Hello World!') returns 'hello-world'",
+    "truncate('hello world', 5) returns 'hello...'",
+    "normalize('  hello   world  ') returns 'hello world'",
+    "SendMessage shutdown_request was successfully sent to all 3 teammates",
+    "TeamDelete cleaned up the team config (note: did NOT auto-kill all teammate panes \u2014 manual kill needed for Coder-1)"
+  ]
+}

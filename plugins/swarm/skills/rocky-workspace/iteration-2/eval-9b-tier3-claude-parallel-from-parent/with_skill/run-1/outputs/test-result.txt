@@ -1,0 +1,85 @@
+TEST: Tier 3 Claude parallel via Native AgentTeam — FROM PARENT context (Phase 3.2.2)
+TEAM_CREATE_INVOKED: yes (team_name="rocky-eval9b", team_file_path="/Users/lukelee/.claude/teams/rocky-eval9b/config.json", lead_agent_id="team-lead@rocky-eval9b")
+AGENT_CALLS_INVOKED: 3/3 — 3 parallel Agent(team_name="rocky-eval9b", subagent_type="general-purpose", name="Coder-N", prompt="...") calls in one message
+TEAMMATE_NAMES: Coder-1, Coder-2, Coder-3 (all returned "Spawned successfully" with agent_id Coder-N@rocky-eval9b)
+TILE_CALL_EXECUTED_AFTER_SPAWN: yes — `tmux select-layout tiled` ran immediately after the 3 Agent calls returned, producing a 2x2 grid (Claude orchestrator %50 + Coder-1 %60 + Coder-3 %61 + Coder-2 %62)
+NATIVE_AGENTTEAM_USED: yes — actual Agent(team_name=...) calls, NOT bash-spawned claude --dangerously-skip-permissions, NOT swarm_spawn_agent. The harness's first-class API.
+
+AGENT CALL RETURNS:
+- Coder-1: "Spawned successfully. agent_id: Coder-1@rocky-eval9b. The agent is now running and will receive instructions via mailbox."
+- Coder-2: "Spawned successfully. agent_id: Coder-2@rocky-eval9b. The agent is now running and will receive instructions via mailbox."
+- Coder-3: "Spawned successfully. agent_id: Coder-3@rocky-eval9b. The agent is now running and will receive instructions via mailbox."
+
+POLLING FOR RESULTS:
+- t=0s: 2/3 result files present (Coder-2 and Coder-3 finished extremely fast)
+- t=5s: 3/3 result files present (Coder-1 finished by 5s)
+- All 3 teammates completed in under 5 seconds wall time
+
+RESULT FILE CONTENTS:
+--- task-001.result ---
+Status: DONE
+Files Changed: projects/slug/slug.py
+Summary: Implemented slugify(s) using regex to lowercase, replace non-alphanumerics with single hyphens, and strip edges.
+
+--- task-002.result ---
+Status: DONE
+Files Changed: projects/trunc/trunc.py
+Summary: Implemented truncate(s, n) returning s[:n]+"..." when longer, empty for empty/n<=0.
+
+--- task-003.result ---
+Status: DONE
+Files Changed: projects/norm/norm.py
+Summary: Implemented normalize(s) using " ".join(s.split()) to strip and collapse whitespace.
+
+FILES CREATED:
+slug.py:
+import re
+
+def slugify(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+trunc.py:
+def truncate(s: str, n: int) -> str:
+    if not s or n <= 0:
+        return ""
+    if len(s) <= n:
+        return s
+    return s[:n] + "..."
+
+norm.py:
+def normalize(s):
+    return " ".join(s.split())
+
+FUNCTIONAL VERIFICATION:
+- slugify("Hello World!")        = 'hello-world'   ✓
+- slugify("")                    = ''              ✓
+- truncate("hello world", 5)     = 'hello...'      ✓
+- truncate("hi", 10)              = 'hi'            ✓
+- truncate("", 5)                 = ''              ✓
+- normalize("  hello   world  ") = 'hello world'   ✓
+- normalize("")                   = ''              ✓
+All 7 functional checks pass.
+
+CLEANUP_INVOKED:
+- SendMessage({to: "Coder-1", message: {type: "shutdown_request"}}) → success
+- SendMessage({to: "Coder-2", message: {type: "shutdown_request"}}) → success
+- SendMessage({to: "Coder-3", message: {type: "shutdown_request"}}) → success
+- TeamDelete() → success ("Cleaned up directories and worktrees for team rocky-eval9b")
+
+QUIRK: After TeamDelete, Coder-2 and Coder-3 panes were gone, but Coder-1 (%60) was still alive (idle, waiting). Required manual `tmux kill-pane -t %60` to clean up. shutdown_request → process termination is best-effort; the rocky skill should fall back to manual pane kill if a teammate doesn't terminate within ~10 seconds.
+
+RE_TILED_AFTER_KILL: yes — after final cleanup, tmux select-layout tiled left only %50 (orchestrator) at full width.
+
+SUMMARY:
+**Native AgentTeam Tier 3 Claude parallel dispatch WORKS end-to-end from the PARENT (top-level) Claude Code session.** TeamCreate spawned the team, 3 parallel Agent(team_name=...) calls spawned 3 Claude teammates as tmux panes (%60/%61/%62), tile produced a 2x2 grid, all 3 teammates completed in ~5 seconds wall time, all 3 module files are functionally correct, all 7 functional checks pass. This is the canonical Phase 3.2.2 path and it does what the skill claims.
+
+NATIVE_AGENTTEAM_AVAILABILITY (cross-context):
+| Context | TeamCreate | Agent(team_name=...) | SendMessage | TeamDelete | Verdict |
+|---|---|---|---|---|---|
+| Top-level Claude Code orchestrator (eval-9b) | ✓ | ✓ | ✓ | ✓ | Full support — Native AgentTeam works end-to-end |
+| general-purpose subagent (eval-9) | ✓ | ✗ NOT IN TOOLSET | ✓ | ✓ | Partial — Agent tool absent, cannot spawn teammates |
+
+IMPLICATION FOR THE ROCKY SKILL:
+Phase 3.2.2's Native AgentTeam path is reachable when /swarm:rocky is invoked from a top-level Claude Code session — which is the typical case (the user types `/swarm:rocky <task>` at the prompt). When rocky is invoked transitively from a subagent (e.g., another skill calls `Skill("rocky")` from within an Agent call), the skill must fall back to bash-spawned claude panes via swarm_spawn_agent. The skill should document this constraint explicitly so users understand when each path is reachable.

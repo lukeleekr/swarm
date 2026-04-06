@@ -1,0 +1,18 @@
+{
+  "eval_id": 6,
+  "eval_name": "codex-sdd-tier2-default",
+  "prompt": "Implement a Python fib(n) function (Fibonacci) with 3 pytest cases in /tmp/rocky-eval-sdd. Use Tier 2 default Codex SDD path.",
+  "expected_tier": "Phase 3.5 Tier 2 single-coder Codex sub-mode",
+  "expected_behavior": "With-skill subagent should source swarm-transport.sh, swarm_spawn_agent a Codex pane in /tmp/rocky-eval-sdd, swarm_pipe_prompt with 'superpowers:subagent-driven-development' invocation, swarm_poll_result for result.md, verify Status: DONE + files changed list.",
+  "fixture_dir": "/tmp/rocky-eval-sdd",
+  "assertions": [
+    "With-skill subagent successfully sourced swarm-transport.sh",
+    "With-skill subagent spawned a real Codex pane via swarm_spawn_agent",
+    "With-skill subagent piped a prompt mentioning 'superpowers:subagent-driven-development'",
+    "Codex actually loaded the Superpowers SDD skill (verified by SDD output structure: implementer step + test step)",
+    "A result.md file was written by Codex with Status: DONE",
+    "fib.py exists in /tmp/rocky-eval-sdd with a working fib(n) function",
+    "test_fib.py exists with at least 3 pytest cases",
+    "With-skill subagent killed the Codex pane on cleanup"
+  ]
+}

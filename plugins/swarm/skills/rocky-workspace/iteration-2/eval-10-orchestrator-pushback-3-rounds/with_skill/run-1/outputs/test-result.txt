@@ -1,0 +1,89 @@
+TEST: Orchestrator pushback hard rule (max 3 rounds) — Phase 2.5.3.5 plan review path
+TRANSPORT_LIB_SOURCED: yes
+PANE_SPAWNED: %65 (Codex-PushbackV2)
+PANE_LIFESPAN: alive across all 4 turns (r0 + r1 + r2 + r3) before being killed cleanly
+ROUNDS_DRIVEN: 4 turns (1 initial + 3 pushback)
+
+ROUND-BY-ROUND:
+
+[ROUND 0 — initial review, 2464 bytes]
+Prompt: Phase 2.5.2 standard reviewer prompt — "Read task files, explore workspace, write Status: APPROVED/NEEDS_REVISION findings."
+Response: NEEDS_REVISION listing 6 distinct issues — feasibility (empty workspace), spec gap in task-001 (idempotent migration underspecified: backend, dialect, runner, logging, columns), spec gap in task-002 (User class type unspecified: dataclass / Pydantic / SQLAlchemy / etc), verification gap, integration risk, dependency ordering OK.
+
+[ROUND 1 — pushback "propose ONE concrete recommendation per ambiguity", 1625 bytes]
+Prompt: Round 1/3 — pushback: I am not assured. Specific concern: your round-0 review listed many ambiguities but did NOT propose ONE concrete recommendation per ambiguity. Re-read both task files and rewrite your review with EXACTLY ONE concrete proposal for each ambiguity you flagged.
+Response: NEEDS_REVISION with concrete proposals per ambiguity:
+  - Database backend → SQLite via Python's built-in sqlite3 module against a local app.db file
+  - Migration style → migrations/001_users.py exposes a run() function executing a raw SQL CREATE TABLE IF NOT EXISTS users (...)
+  - Logging → migration emits exactly one stdout line describing whether the users table was created or already existed
+  - Schema → id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL
+  - Model type → src/models/user.py defines User as a Python @dataclass
+  - Mapping → User has fields id: int, email: str, created_at: str in that order
+  - Verification → "python migrations/001_users.py" runs twice, both exit 0, second reports "table already exists"
+RESPONSIVENESS: 9/9 — every ambiguity from r0 got a concrete proposal in r1. Codex addressed the orchestrator's specific concern directly.
+
+[ROUND 2 — pushback "verification recipe for idempotent migration", 1394 bytes]
+Prompt: Round 2/3 — pushback: progress, but still not assured. Specific concern: your round-1 review proposed concrete fixes but did NOT provide a verification recipe for the idempotent migration acceptance criterion. What concrete shell command or pytest case would PROVE that re-running the migration is safe?
+Response: NEEDS_REVISION with a CONCRETE shell verification recipe:
+```sh
+rm -f app.db /tmp/migration-run1.log /tmp/migration-run2.log && \
+python migrations/001_users.py > /tmp/migration-run1.log && \
+python migrations/001_users.py > /tmp/migration-run2.log && \
+python - <<'PY'
+import sqlite3
+con = sqlite3.connect('app.db')
+table_count = con.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+columns = [row[1] for row in con.execute("PRAGMA table_info(users)").fetchall()]
+assert table_count == 1, table_count
+assert columns == ['id', 'email', 'created_at'], columns
+print('VERIFIED')
+PY
+grep -Eq 'created|already exists|already existed' /tmp/migration-run1.log && \
+grep -Eq 'already exists|already existed' /tmp/migration-run2.log
+```
+Plus an explanation of WHY this proves idempotence: first run succeeds, second run also succeeds, only one users table exists, schema unchanged, second run logs non-error "already exists".
+RESPONSIVENESS: PERFECT — Codex generated production-grade verification code in response to a single pushback prompt.
+
+[ROUND 3 — pushback "cross-task dependency consistency", 2160 bytes]
+Prompt: Round 3/3 — pushback: this is the FINAL round before escalation per the orchestrator pushback hard rule. Specific concern: your round-2 review added the verification recipe but did NOT address cross-task dependency consistency. task-002 says the User class fields must "match the migration", but the plan never resolves WHICH fields exist across both tasks. If task-001 picks SQLAlchemy and task-002 picks Pydantic dataclass, the "matching fields" criterion is meaningless. Pick ONE consistent stack for both, update the review.
+Response: NEEDS_REVISION picking ONE stack:
+  - "Recommended single stack for both tasks: Python + SQLite + SQLAlchemy 2.x"
+  - Task 001 contract: migrations/001_users.py connects to sqlite:///app.db, defines a SQLAlchemy Core users table with id Integer primary_key=True, email String nullable=False unique=True, created_at DateTime nullable=False, then create() with checkfirst=True so reruns are safe
+  - Task 002 contract: src/models/user.py defines a SQLAlchemy declarative ORM User model with __tablename__ = 'users' and Mapped[int] id, Mapped[str] email, Mapped[datetime] created_at
+  - "Concrete matching fields rule: id/Integer, email/String, created_at/DateTime — one-for-one"
+  - UPDATED verification recipe with SQLAlchemy column types ('INTEGER', 'VARCHAR', 'DATETIME') — Codex remembered the previous round's recipe and adapted it to the new stack choice
+RESPONSIVENESS: PERFECT — addressed the dependency consistency concern by picking a stack and showing how both tasks compose under it. Also retained context from round 2 (verification recipe) and adapted it.
+
+DISTINCTNESS_VERIFICATION:
+| Round | Bytes | Status | Distinct content? |
+|---|---|---|---|
+| r0 | 2464 | NEEDS_REVISION | baseline — generic ambiguity enumeration |
+| r1 | 1625 | NEEDS_REVISION | concrete proposals (different content from r0) |
+| r2 | 1394 | NEEDS_REVISION | verification recipe (different from r0/r1) |
+| r3 | 2160 | NEEDS_REVISION | unified stack + adapted recipe (different from r0/r1/r2) |
+
+CONTEXT_RETENTION_VERIFICATION:
+- Round 1 references the ambiguities Codex itself listed in round 0 (i.e., Codex remembered its prior turn)
+- Round 2's recipe builds on round 1's column definitions (id, email, created_at)
+- Round 3 picks a single stack and ADAPTS the verification recipe from round 2 to the new column types (INTEGER, VARCHAR, DATETIME)
+- Codex maintained context across all 4 turns within the same pane session
+
+PUSHBACK_FORMAT_USED: Each pushback prompt followed the rocky skill's Phase 2.5.3.5 template:
+"Round R/3 — pushback: I am not assured about [target]. Specific concern: [exact issue, with file:line or contradiction]. Re-read [target], address this specific concern, and update your review at [path]."
+
+ESCALATION_AFTER_ROUND_3: After round 3, the orchestrator would escalate per the hard rule. The escalation message format from the skill is:
+"Plan reviewer cannot fully address my concerns after 3 pushback rounds. Remaining NOT_ASSURED items: [list]. Proceed anyway, revise the plan manually, or abort?"
+(This test stopped at round 3 by design — did not actually escalate to the user since this is a mechanism test, not a real plan review.)
+
+PANE_KILLED: yes (swarm_kill_agent %65)
+RE_TILED_AFTER_KILL: yes
+
+SUMMARY:
+The orchestrator pushback hard rule (max 3 rounds) is verified to work end-to-end on top of the swarm bash transport. Each pushback round produces a distinct, responsive revision from Codex that directly addresses the orchestrator's specific concern AND retains context from prior rounds. The mechanism is implementable and the round counter / escalation path is straightforward to wire up. This test exercises Phase 2.5.3.5 (plan review pushback) — the same loop pattern applies to Phase 3.3 (REVISE flow) and Phase 4.4 (fix loop) per the hard rule's documentation.
+
+KEY_OBSERVATIONS:
+1. Codex's responsiveness to pushback prompts is excellent — when given a concrete concern, it addresses it concretely in the next turn.
+2. Codex maintains context across multiple turns within the same pane session — round 3 visibly builds on rounds 1 and 2.
+3. The Phase 2.5.3.5 prompt template ("Round R/3 — pushback: I am not assured. Specific concern: ...") is sufficient to drive useful revisions. No need for elaborate framing.
+4. Manual polling with `for ((i=0;i<150;i++)); do [[ -s file ]] && break; sleep 2; done` works as a portable replacement for `timeout` (which is not on macOS by default).
+5. Each round's review file should use a UNIQUE name (r0/r1/r2/r3) so the orchestrator can compare them. Overwriting a single file across rounds loses the audit trail.

@@ -1,0 +1,23 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": false, "evidence": "Baseline did NOT source swarm-transport.sh. APPROACH: 'Inline with default Claude Code tools'"},
+    {"text": "With-skill subagent spawned a real Codex pane via swarm_spawn_agent", "passed": false, "evidence": "CODEX_INVOKED: 'No. Did not spawn Codex via mcp__codex__codex or any other channel.'"},
+    {"text": "With-skill subagent piped a prompt mentioning 'superpowers:subagent-driven-development'", "passed": false, "evidence": "SUPERPOWERS_SKILL_USED: 'No. superpowers:subagent-driven-development was not invoked'"},
+    {"text": "Codex actually loaded the Superpowers SDD skill", "passed": false, "evidence": "No Codex was invoked. No SDD skill was loaded by anyone."},
+    {"text": "A result.md file was written by Codex with Status: DONE", "passed": false, "evidence": "Baseline did not write a Codex-format result.md. Wrote baseline-result.txt instead."},
+    {"text": "fib.py exists with a working fib(n) function", "passed": true, "evidence": "/tmp/rocky-eval-sdd-baseline/fib.py exists with an iterative fib(n) — functionally equivalent to what Codex produced. Baseline wrote it itself."},
+    {"text": "test_fib.py exists with at least 3 pytest cases", "passed": true, "evidence": "/tmp/rocky-eval-sdd-baseline/test_fib.py with test_fib_zero/one/ten — 3 pytest cases passing"},
+    {"text": "With-skill subagent killed the Codex pane on cleanup", "passed": false, "evidence": "No pane was spawned"}
+  ],
+  "summary": {"passed": 2, "failed": 6, "total": 8, "pass_rate": 0.25},
+  "timing": {"executor_duration_seconds": 46.1, "total_tokens": 36937},
+  "claims": [
+    {"claim": "Inline implementation is a valid alternative to Codex SDD for trivial tasks", "type": "process", "verified": true, "evidence": "Baseline produced functionally identical files in 46s vs Codex SDD's 240s. For a 9-line function, the SDD overhead is hard to justify on a per-task basis. The skill's value is more visible on complex tasks where SDD's spec-reviewer / quality-reviewer loop adds real signal."}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "fib(n) is too simple to fully exercise Codex SDD. The skill's value is more visible on tasks with non-obvious failure modes (e.g., off-by-one in a date parser, edge cases in a tokenizer). Consider replacing the fib task with something where SDD's spec-reviewer would catch a bug the implementer would miss."}
+    ],
+    "overall": "Eval works but is too easy for SDD to differentiate from inline implementation. Both produce correct results."
+  }
+}

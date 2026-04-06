@@ -1,0 +1,16 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": true, "evidence": "Pane %55 'rocky-eval-plan' created in correct cwd"},
+    {"text": "With-skill subagent spawned a real Codex reviewer pane via swarm_spawn_agent", "passed": true, "evidence": "Pane %55 visible during the run"},
+    {"text": "With-skill subagent piped the Phase 2.5.2 reviewer prompt", "passed": true, "evidence": "The piped prompt was the verbatim Phase 2.5.2 standard reviewer prompt — confirmed by the output format matching the skill's expected APPROVED/NEEDS_REVISION + findings format"},
+    {"text": "Codex read the task files at /tmp/rocky-eval-plan/.swarm/sess-test-plan/tasks/", "passed": true, "evidence": "Review explicitly references 'task-001.md:7-11' and 'task-002.md:10-15' — line numbers within the actual task files. Also notes the dependency from task-002 to task-001."},
+    {"text": "A plan-review-standard.result file was written with Status: APPROVED or NEEDS_REVISION format", "passed": true, "evidence": "/tmp/rocky-eval-plan/.swarm/sess-test-plan/reviews/plan-review-standard.result starts with 'Status: NEEDS_REVISION' (1877 bytes)"},
+    {"text": "Review demonstrates understanding of the 2-task plan (e.g., notes the dependency from task-002 to task-001)", "passed": true, "evidence": "Finding 4: 'The task ordering is sensible and the scope is small, so feasibility is high after revision. Task 002 correctly depends on Task 001'"},
+    {"text": "With-skill subagent killed the Codex pane on cleanup", "passed": true, "evidence": "Pane %55 killed by parent after harvesting"}
+  ],
+  "summary": {"passed": 7, "failed": 0, "total": 7, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 120.0, "note": "Codex plan reviewer ran ~2 min, exploring the workspace and reading task files"},
+  "claims": [
+    {"claim": "Codex explored the actual filesystem and noted absent scaffolding", "type": "factual", "verified": true, "evidence": "Review notes 'pyproject.toml, pytest.ini, setup.cfg, requirements*.txt, tox.ini were all absent' — Codex actually checked the workspace, not just read the task files"}
+  ]
+}

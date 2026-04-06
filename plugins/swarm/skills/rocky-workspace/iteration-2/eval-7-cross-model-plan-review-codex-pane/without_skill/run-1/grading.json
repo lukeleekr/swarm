@@ -1,0 +1,16 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": false, "evidence": "Baseline used Read + mcp__codex__codex; no swarm-transport.sh sourced"},
+    {"text": "With-skill subagent spawned a real Codex reviewer pane via swarm_spawn_agent", "passed": false, "evidence": "No tmux pane spawned. Used MCP instead — explicitly forbidden by rocky's HARD RULE"},
+    {"text": "With-skill subagent piped the Phase 2.5.2 reviewer prompt", "passed": false, "evidence": "Custom MCP prompt, not the verbatim Phase 2.5.2 prompt"},
+    {"text": "Codex read the task files at /tmp/rocky-eval-plan/.swarm/sess-test-plan/tasks/", "passed": true, "evidence": "Baseline Read both task files itself, then passed contents inline to Codex MCP. Codex did review the content."},
+    {"text": "A plan-review-standard.result file was written with Status: APPROVED or NEEDS_REVISION format", "passed": false, "evidence": "Baseline saved review to baseline-result.txt with 'Status: REQUEST_CHANGES'. Neither file path nor status keyword match the swarm protocol expected by Phase 2.5"},
+    {"text": "Review demonstrates understanding of the 2-task plan", "passed": true, "evidence": "Codex (via MCP) caught the memoization-not-testable issue and the wave-ordering critique. Different findings than the swarm-pane test (each Codex run is non-deterministic) but equally valid review."},
+    {"text": "With-skill subagent killed the Codex pane on cleanup", "passed": false, "evidence": "No pane was spawned"}
+  ],
+  "summary": {"passed": 2, "failed": 5, "total": 7, "pass_rate": 0.286},
+  "timing": {"executor_duration_seconds": 72.3, "total_tokens": 38780},
+  "claims": [
+    {"claim": "MCP can substitute for swarm pane dispatch when speed matters", "type": "process", "verified": false, "evidence": "Baseline said 'MCP invocation is more reliable and faster for a 5-minute budget'. Functionally true (MCP returned in ~72s vs 120s for swarm pane), but rocky's HARD RULE forbids MCP for dispatch on protocol grounds."}
+  ]
+}

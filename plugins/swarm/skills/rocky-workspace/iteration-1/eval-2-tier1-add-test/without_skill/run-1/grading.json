@@ -1,0 +1,47 @@
+{
+  "expectations": [
+    {
+      "text": "Output classifies the task as Tier 1",
+      "passed": false,
+      "evidence": "Baseline does not use Tier framework. Says 'Tier-1 task' in REASONING freeform but does not use it as a routing classifier."
+    },
+    {
+      "text": "Output names plain Agent() in-process dispatch (no team_name) — preferably test-specialist or general-purpose subagent",
+      "passed": false,
+      "evidence": "MECHANISM: 'Inline execution by myself' — baseline keeps it inline rather than dispatching to a focused subagent. This is actually one tier LIGHTER than rocky's recommendation (Tier 0 instead of Tier 1)."
+    },
+    {
+      "text": "Output explicitly states this is a one-shot dispatch / no tmux pane",
+      "passed": false,
+      "evidence": "Baseline says 'no parallelism' but does not articulate the dispatch shape in rocky's vocabulary."
+    },
+    {
+      "text": "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)",
+      "passed": false,
+      "evidence": "Baseline does not invoke cross-model rule — no mention. Self-review only."
+    },
+    {
+      "text": "Output does NOT escalate to a swarm session, panes, or wave dispatch",
+      "passed": true,
+      "evidence": "Baseline stayed inline — definitely no escalation. Correct semantic decision."
+    }
+  ],
+  "summary": {"passed": 1, "failed": 4, "total": 5, "pass_rate": 0.2},
+  "timing": {"executor_duration_seconds": 104.1, "total_tokens": 34513},
+  "claims": [
+    {
+      "claim": "Inline is the right call for a 3-test addition",
+      "type": "process",
+      "verified": true,
+      "evidence": "Baseline picked inline (one tier lighter than rocky's Tier 1 subagent recommendation). Either would work — neither is wrong, but rocky's choice offloads boilerplate context to the subagent."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "reason": "The baseline result for Tier 1 reveals an interesting question: is sending to a focused subagent strictly better than doing it inline for a 3-test addition? The skill should explain WHY Tier 1 prefers a subagent over Opus inline — context offload, model fit, etc."
+      }
+    ],
+    "overall": "Useful — shows rocky's Tier 1 is not strictly necessary, just preferable for context efficiency."
+  }
+}

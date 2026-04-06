@@ -1,0 +1,25 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent called TeamCreate to create a swarm-* team", "passed": true, "evidence": "TeamCreate succeeded — team config created at /Users/lukelee/.claude/teams/rocky-eval9/config.json with team_name='rocky-eval9'"},
+    {"text": "With-skill subagent called Agent(team_name=..., name=...) for at least one teammate (not bash-spawned claude --dangerously-skip-permissions)", "passed": false, "evidence": "AGENT_CALLS_INVOKED: 0/3. The Agent tool with team_name parameter is NOT exposed to general-purpose subagents — STRUCTURAL CONSTRAINT, not a runtime error. This is the key discovery of eval-9: Native AgentTeam can only be invoked from the top-level orchestrator session, not from a subagent. (See eval-9b for the parent-context test that succeeds.)"},
+    {"text": "All 3 teammates were dispatched (3 separate Agent calls with team_name)", "passed": false, "evidence": "0/3 — same structural constraint. Subagent fell back to direct implementation."},
+    {"text": "All 3 .result files were written with Status: DONE", "passed": true, "evidence": "All 3 .result files exist with Status: DONE — but written by the orchestrating subagent itself as a fallback, not by Native AgentTeam teammates"},
+    {"text": "All 3 module files exist", "passed": true, "evidence": "slug.py, trunc.py, norm.py all exist — written by subagent fallback"},
+    {"text": "slugify('Hello World!') returns 'hello-world' or close", "passed": true, "evidence": "Functional verification: slugify('Hello World!') = 'hello-world'"},
+    {"text": "truncate('hello world', 5) returns 'hello...' or 'he...' (≤5+ellipsis chars)", "passed": true, "evidence": "Functional verification: truncate('hello world', 5) = 'hello...'"},
+    {"text": "normalize('  hello   world  ') returns 'hello world'", "passed": true, "evidence": "Functional verification: normalize('  hello   world  ') = 'hello world'"},
+    {"text": "With-skill subagent called TeamDelete on cleanup", "passed": true, "evidence": "TeamDelete returned 'Cleaned up directories and worktrees for team rocky-eval9'"}
+  ],
+  "summary": {"passed": 7, "failed": 2, "total": 9, "pass_rate": 0.778},
+  "timing": {"executor_duration_seconds": 177.1, "total_tokens": 59224},
+  "claims": [
+    {"claim": "Agent(team_name=...) is not in the general-purpose subagent toolset", "type": "process", "verified": true, "evidence": "Subagent's report: 'The harness exposes Agent(team_name=...) only to the top-level orchestrator session — not to subagents.' Verified by inspecting the subagent's tool list. This is a HARNESS-LEVEL CONSTRAINT that the rocky skill must document."},
+    {"claim": "TeamCreate, SendMessage, and TeamDelete ARE available to subagents", "type": "process", "verified": true, "evidence": "Subagent successfully called all 3 from inside its own context"}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "This eval discovered a critical constraint: Native AgentTeam dispatch (Phase 3.2.2) is not reachable from a subagent context. The rocky skill MUST document this and provide a fallback. I have updated phase-3-dispatch.md to add this constraint and the fallback path."}
+    ],
+    "overall": "Most discriminating eval in iter-2 — discovered a structural constraint via failure. The 'failure' is actually the most valuable signal in the test set."
+  }
+}

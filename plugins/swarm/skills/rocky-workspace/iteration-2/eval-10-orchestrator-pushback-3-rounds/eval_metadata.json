@@ -1,0 +1,21 @@
+{
+  "eval_id": 11,
+  "eval_name": "orchestrator-pushback-3-rounds",
+  "prompt": "Verify that the ORCHESTRATOR PUSHBACK (max 3 rounds) hard rule actually works end-to-end. Spawn a Codex plan reviewer pane, run the initial review (round 0), then drive 3 pushback rounds with specific concerns per the rocky skill's Phase 2.5.3.5 pattern. Each round must produce a distinct response from Codex that directly addresses the concern. After round 3, the orchestrator escalates to the user.",
+  "expected_behavior": "4 review files (r0/r1/r2/r3) all written, each addressing a different specific concern, each building on the previous round's content. Demonstrates that the pushback loop is implementable end-to-end on top of the swarm bash transport.",
+  "fixture_dir": "/tmp/rocky-eval-pushback",
+  "session_dir": "/tmp/rocky-eval-pushback/.swarm/sess-pushback",
+  "test_method": "Driven manually by the parent orchestrator (not a subagent) to keep tight control over the round timing and prompt content. Each pushback prompt followed the rocky skill's Phase 2.5.3.5 template: 'Round R/3 — pushback: I am not assured. Specific concern: [exact issue]. Re-read [target], address this specific concern, and update your review at [path].'",
+  "assertions": [
+    "Codex pane spawned and stayed alive across all 4 turns (r0 + r1 + r2 + r3)",
+    "Round 0 produced a NEEDS_REVISION review listing multiple ambiguities",
+    "Round 1 pushback ('propose concrete recommendations per ambiguity') produced a NEW review with concrete proposals for each ambiguity",
+    "Round 2 pushback ('verification recipe for idempotent migration') produced a NEW review with a concrete shell verification command",
+    "Round 3 pushback ('cross-task dependency consistency') produced a NEW review picking ONE stack for both tasks with explicit field-mapping contracts",
+    "All 4 review files are distinct (different sizes, different content)",
+    "Each round was responsive to its specific concern (not a copy-paste of the previous round)",
+    "Each round built on the previous round's content (Codex maintained context)",
+    "The pane was killed cleanly on completion",
+    "After round 3, escalation to the user would fire per the hard rule"
+  ]
+}

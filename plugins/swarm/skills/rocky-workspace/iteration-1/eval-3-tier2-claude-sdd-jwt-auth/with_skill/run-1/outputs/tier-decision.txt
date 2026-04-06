@@ -1,0 +1,10 @@
+TIER: 2
+ANNOUNCEMENT: Tier 2, Claude SDD (in-process Skill invocation), Codex plan reviewer, Codex code reviewer.
+SIGNALS WALKED:
+  Tier 0: doesn't fit — far more than 20 LOC, multiple files (User model, auth utils, JWT module, 5 route handlers, middleware, test files), and substantive design judgment required (token shape, refresh strategy, middleware layering).
+  Tier 1: doesn't fit — spans well beyond 1–3 files, has explicit acceptance criteria (5 named endpoints, argon2 hashing, JWT generation/verification, per-endpoint tests, auth middleware), and is not a mechanical one-shot dispatch.
+  Tier 2: FITS — substantive feature with clear acceptance criteria, ordered dependencies (User model → password hashing → JWT gen/verify → endpoints → middleware → tests), quality matters more than throughput, and the work is one coherent feature best executed by a single coder running the SDD loop with plan + code review gates. STOP here per "first tier that fits" rule.
+  Tier 3: not evaluated — Tier 2 fit first; tasks are not 3+ truly independent disjoint modules (they form a single dependency chain), and the user did not ask for visible multi-pane parallelism.
+DECISION A: Claude — user explicitly said "use claude only ... keep it inside the same opus session", which maps to the --agents claude flag, overriding the default Codex coder.
+DECISION B: Tier 2 + Claude per the Decision B table → Opus invokes Skill("superpowers:subagent-driven-development") directly in its own (this) session. NO tmux pane is spawned, NO swarm_spawn_agent call, NO fresh Claude process — it is an in-process Skill invocation that runs the Superpowers SDD loop on the Claude side.
+CROSS-MODEL: Plan reviewer = Codex pane (always, per Phase 2.5 — spawned via swarm_spawn_agent to review the plan before Phase 3). Code reviewer = Codex pane (opposite-model of the Claude coder, per Phase 4.3a — Codex pane invokes superpowers:requesting-code-review from ~/.codex/superpowers/skills/requesting-code-review/ to review the diff produced by Claude).

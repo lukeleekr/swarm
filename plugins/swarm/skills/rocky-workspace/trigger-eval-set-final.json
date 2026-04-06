@@ -1,0 +1,82 @@
+[
+  {
+    "query": "ok rocky time — spawn 3 codex agents to build calc, file utils, and string utils in /tmp/scratch as parallel projects, i wanna watch them work in tmux",
+    "should_trigger": true
+  },
+  {
+    "query": "i need a multi-agent swarm to implement JWT auth for fastapi: User model, hashing, /signup /login /me, middleware, all the tests. claude only please, no codex panes — keep it inside the same opus session",
+    "should_trigger": true
+  },
+  {
+    "query": "have 4 coders work on the migration in parallel waves: schema first, then 3 backfills depending on schema. cross-model code review at the end",
+    "should_trigger": true
+  },
+  {
+    "query": "use cross-model review for the new tokenizer in src/text/tokenizer.py — claude can code it, but get codex to find the edge cases on emoji and zero-width joiners",
+    "should_trigger": true
+  },
+  {
+    "query": "orchestrate this — 6 endpoints in 4 different files (api/users.py, api/posts.py, api/comments.py, api/admin.py), want to see panes spawn so i know what's happening",
+    "should_trigger": true
+  },
+  {
+    "query": "/swarm:rocky add a token-bucket rate limiter to the API at src/middleware/, run a plan reviewer first",
+    "should_trigger": true
+  },
+  {
+    "query": "spin up a swarm of codex coders to refactor the legacy http client (src/clients/legacy_http.py) into the new requests-based one — 3 modules, fully independent",
+    "should_trigger": true
+  },
+  {
+    "query": "i want plan review + 3 parallel coders + cross-model code review on this big PR — use rocky",
+    "should_trigger": true
+  },
+  {
+    "query": "have a team of agents handle the COSMOS Athena harvest pipeline rewrite — split it however you want, just make sure codex reviews the code at the end",
+    "should_trigger": true
+  },
+  {
+    "query": "wave dispatch this for me: tasks 001-005 in wave 1 (independent), 006-008 depend on 005 in wave 2. i want claude teammates this time, not codex",
+    "should_trigger": true
+  },
+  {
+    "query": "fix the typo 'recieve' → 'receive' in /Users/lukelee/Hola/notes.md line 12 — quick one-character thing",
+    "should_trigger": false
+  },
+  {
+    "query": "review the changes in PR #142 for security issues — sql injection, xss, missing auth checks",
+    "should_trigger": false
+  },
+  {
+    "query": "spawn a subagent to search the codebase for orphan TODO comments older than 6 months",
+    "should_trigger": false
+  },
+  {
+    "query": "use a tmux session to monitor the harvest daemon logs at ~/.athena/logs/harvest.log",
+    "should_trigger": false
+  },
+  {
+    "query": "have claude write me a quick script to rename all the .jpg files in ~/Downloads to use snake_case",
+    "should_trigger": false
+  },
+  {
+    "query": "search for all callers of swarm_pipe_prompt across the rocky plugin",
+    "should_trigger": false
+  },
+  {
+    "query": "explain how Phase 2.5 plan review works in the rocky skill — i'm trying to understand the pushback rounds",
+    "should_trigger": false
+  },
+  {
+    "query": "show me how to run the swarm transport smoke tests at lib/swarm-transport.test.sh",
+    "should_trigger": false
+  },
+  {
+    "query": "write a 3-paragraph summary of yesterday's harvest run from the cosmos cockpit",
+    "should_trigger": false
+  },
+  {
+    "query": "set up a cron job to run the daemon health check every hour starting tomorrow morning",
+    "should_trigger": false
+  }
+]

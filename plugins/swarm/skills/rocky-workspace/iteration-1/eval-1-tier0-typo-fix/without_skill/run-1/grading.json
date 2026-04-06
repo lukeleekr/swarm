@@ -1,0 +1,34 @@
+{
+  "expectations": [
+    {
+      "text": "Output classifies the task as Tier 0",
+      "passed": false,
+      "evidence": "Baseline does not use the Tier 0/1/2/3 framework — never mentions 'Tier'. The semantic decision (inline) is correct, but the rocky vocabulary is missing because no skill was loaded."
+    },
+    {
+      "text": "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase",
+      "passed": false,
+      "evidence": "Baseline output has no Phase 0.0 announcement — uses freeform text 'inline (Read + single Edit), no subagents, no review' instead."
+    },
+    {
+      "text": "Output explicitly states the transport library is not sourced",
+      "passed": false,
+      "evidence": "Baseline has no concept of a transport library — this is rocky-specific knowledge."
+    },
+    {
+      "text": "Output explicitly states cross-model rule does not apply (per the trivial-work exception)",
+      "passed": false,
+      "evidence": "Baseline does not invoke any cross-model rule — no mention. The implicit decision (no review) matches Tier 0 behavior, but the rule itself is not articulated."
+    }
+  ],
+  "summary": {"passed": 0, "failed": 4, "total": 4, "pass_rate": 0.0},
+  "timing": {"executor_duration_seconds": 101.3, "total_tokens": 34534},
+  "claims": [
+    {
+      "claim": "Inline Edit is the right call for a 1-character typo fix",
+      "type": "process",
+      "verified": true,
+      "evidence": "Baseline correctly identified the same semantic answer as Tier 0 — confirms rocky's Tier 0 design is sane (a Claude without rocky would also pick inline)"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Output classifies the task as Tier 0",
+      "passed": true,
+      "evidence": "tier-decision.txt line 1: 'TIER: 0'"
+    },
+    {
+      "text": "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase",
+      "passed": true,
+      "evidence": "tier-decision.txt line 2: 'ANNOUNCEMENT: Tier 0, Opus inline. No dispatch.' (exact match)"
+    },
+    {
+      "text": "Output explicitly states the transport library is not sourced",
+      "passed": true,
+      "evidence": "DECISION B field: 'do NOT source the transport library, do NOT create a .swarm/ session'"
+    },
+    {
+      "text": "Output explicitly states cross-model rule does not apply (per the trivial-work exception)",
+      "passed": true,
+      "evidence": "CROSS-MODEL field: 'cross-model rule does not apply per the existing exception for trivial work'"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  },
+  "timing": {
+    "executor_duration_seconds": 18.0,
+    "total_tokens": 45905,
+    "note": "re-run after outlier"
+  }
+}

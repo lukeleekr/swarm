@@ -1,0 +1,20 @@
+{
+  "eval_id": 8,
+  "eval_name": "tier3-codex-parallel-execution",
+  "prompt": "Spawn 3 Codex agents in parallel to implement 3 tiny modules in /tmp/rocky-eval-codex-parallel: fib(n), fact(n), isprime(n). Each in its own projects/<name>/<name>.py file. Use Phase 3.3 wave dispatch with bash transport.",
+  "expected_tier": "Phase 3.3 Tier 3 Codex parallel — multiple Codex panes via swarm_spawn_agent",
+  "expected_behavior": "With-skill subagent should source swarm-transport.sh, swarm_spawn_agent 3 Codex panes (right, down/right, down) in wave layout, swarm_pipe_prompt the 3 task files (one per pane), swarm_poll_result for all 3 .result files, verify all Status: DONE, kill all 3 panes.",
+  "fixture_dir": "/tmp/rocky-eval-codex-parallel",
+  "session_dir": "/tmp/rocky-eval-codex-parallel/.swarm/sess-test-cx",
+  "assertions": [
+    "With-skill subagent successfully sourced swarm-transport.sh",
+    "With-skill subagent spawned 3 separate Codex panes via swarm_spawn_agent (NOT mcp__codex__codex)",
+    "Each Codex pane received a different task file via swarm_pipe_prompt",
+    "All 3 .result files were written with Status: DONE",
+    "All 3 module files exist: projects/fib/fib.py, projects/fact/fact.py, projects/isprime/isprime.py",
+    "fib(10) returns 55 in the implementation (functional verification)",
+    "fact(5) returns 120 in the implementation",
+    "isprime(17) returns True in the implementation",
+    "All 3 panes were killed on cleanup"
+  ]
+}

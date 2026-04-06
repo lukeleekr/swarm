@@ -1,0 +1,10 @@
+TIER: 1
+ANNOUNCEMENT: Tier 1, Claude subagent (test-specialist). No review needed.
+SIGNALS WALKED:
+  Tier 0: doesn't fit — Tier 0 requires "Opus already has the file in context (or it's <200 lines to read)" AND "no design judgment required". Opus does not have src/utils/dates.py or tests/test_utils.py in context, and "follow the existing test style in tests/test_utils.py" requires reading the existing test file to match conventions, so this is not pure mechanical inline work.
+  Tier 1: fits — Tier 1 signal is "1–3 files, mechanical, no formal acceptance criteria, one-shot dispatch is sufficient". This task touches 2 files (read src/utils/dates.py + read/write tests/test_utils.py), is mechanical (3 standard pytest cases: empty string, malformed input, happy path), has no formal acceptance criteria beyond the three cases, and a single focused subagent call is sufficient. Cross-model rule does not apply (existing exception for mechanical work).
+  Tier 2: N/A (Tier 1 fit, stopped)
+  Tier 3: N/A (Tier 1 fit, stopped)
+DECISION A: N/A (Tier 1 — coder identity table only applies to Tier 2/3)
+DECISION B: N/A (Tier 1 — sub-mode dispatch table only applies to Tier 2/3; mechanism is plain Agent(subagent_type=test-specialist, prompt=...) with no team_name, single in-process call, no tmux pane)
+CROSS-MODEL: N/A (Tier 1 — cross-model rule does not apply per the existing exception for mechanical work)

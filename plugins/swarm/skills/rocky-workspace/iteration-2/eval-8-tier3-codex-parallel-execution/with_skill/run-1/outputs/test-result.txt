@@ -1,0 +1,42 @@
+TEST: Tier 3 Codex parallel execution (Phase 3.3 wave dispatch via bash transport)
+TRANSPORT_LIB_SOURCED: yes
+PANES_SPAWNED: %56 %57 %58
+TILE_CALL_EXECUTED_AFTER_SPAWN: yes
+PROMPTS_PIPED: 3/3
+POLL_RESULT_EXITS: 0, 0, 0
+RESULT_FILES_EXIST: 3/3
+RESULT_STATUSES: DONE/DONE/DONE
+
+RESULT FILE CONTENTS:
+--- task-001.result ---
+Status: DONE
+Files Changed: /private/tmp/rocky-eval-codex-parallel/projects/fib/fib.py, /tmp/rocky-eval-codex-parallel/.swarm/sess-test-cx/tasks/task-001.result
+Summary: Added an iterative fib(n) implementation and verified fib(0)=0, fib(1)=1, and fib(10)=55.
+
+--- task-002.result ---
+Status: DONE
+Files Changed: projects/fact/fact.py, .swarm/sess-test-cx/tasks/task-002.result
+Summary: Added a recursive factorial function in projects/fact/fact.py and verified fact(0)=1 and fact(5)=120.
+
+--- task-003.result ---
+Status: DONE
+Files Changed: projects/isprime/isprime.py
+Summary: Added a simple trial-division isprime(n) implementation that passes the required acceptance checks.
+
+FILES CREATED:
+/tmp/rocky-eval-codex-parallel/projects/
+  fact/
+    fact.py
+  fib/
+    fib.py
+  isprime/
+    isprime.py
+
+FUNCTIONAL VERIFICATION:
+- fib(10) = 55  (expected 55)   PASS
+- fact(5) = 120  (expected 120)  PASS
+- isprime(17) = True  (expected True)  PASS
+
+PANES_KILLED: yes
+RE_TILED_AFTER_KILL: yes
+SUMMARY: Tier 3 Codex parallel dispatch worked end-to-end. 3 Codex panes spawned via swarm_spawn_agent, tiled into a 2x2 grid with the orchestrator, received prompts via swarm_pipe_prompt, and all three wrote valid .result files with Status: DONE within the 600s budget. All three implementations are functionally correct. One note: swarm_poll_result takes the task .md path (not the .result path) — calling it with the .result path returns ERROR: task file not found immediately. Once corrected, polling succeeded with exit 0 for all three. The bash transport library + Phase 3.3 wave dispatch pattern is confirmed working for Codex parallel coders.

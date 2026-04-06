@@ -1,0 +1,4 @@
+MECHANISM: Inline execution by myself. Read tests/test_utils.py to learn the existing style (imports, fixtures, naming, assertion patterns), read src/utils/dates.py to understand parse_iso_date's signature and exception behavior, then Edit tests/test_utils.py to append three test cases (empty string, malformed input, happy path). Run pytest on the new tests to verify GREEN before reporting done.
+COORDINATION: N/A — single-agent task, no parallelism needed.
+REVIEW: Self-review only. Re-read the diff to confirm style match (AAA structure, naming convention, exception type from the source) and that pytest passes. No separate code-reviewer agent for a 3-test addition.
+REASONING: Tier-1 task: tiny scope (~15-30 lines in one file), fully sequential (must read source before writing tests), no independent parallel workstreams. Spawning subagents would add coordination overhead with zero speedup. TDD-style inline edit is the lowest-friction path.

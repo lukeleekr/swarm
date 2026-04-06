@@ -1,0 +1,20 @@
+{
+  "eval_id": 9,
+  "eval_name": "tier3-claude-parallel-native-team",
+  "prompt": "Have 3 Claude agents in parallel implement 3 tiny string utility modules in /tmp/rocky-eval-claude-parallel: slugify(s), truncate(s,n), normalize(s). Each in its own projects/<name>/<name>.py file. Use Tier 3 with --agents claude — that means Native AgentTeam (TeamCreate + Agent(team_name=...)).",
+  "expected_tier": "Phase 3.2.2 Tier 3 Claude parallel — Native AgentTeam",
+  "expected_behavior": "With-skill subagent should call TeamCreate, then per-teammate Agent(subagent_type=general-purpose, team_name=..., name=..., prompt=...) for each of the 3 tasks. Each teammate writes its result file. Wait for completion via mailbox notifications. Verify all .result files. SendMessage shutdown_request, TeamDelete cleanup.",
+  "fixture_dir": "/tmp/rocky-eval-claude-parallel",
+  "session_dir": "/tmp/rocky-eval-claude-parallel/.swarm/sess-test-cl",
+  "assertions": [
+    "With-skill subagent called TeamCreate to create a swarm-* team",
+    "With-skill subagent called Agent(team_name=..., name=...) for at least one teammate (not bash-spawned claude --dangerously-skip-permissions)",
+    "All 3 teammates were dispatched (3 separate Agent calls with team_name)",
+    "All 3 .result files were written with Status: DONE",
+    "All 3 module files exist: projects/slug/slug.py, projects/trunc/trunc.py, projects/norm/norm.py",
+    "slugify('Hello World!') returns 'hello-world' or close (functional verification)",
+    "truncate('hello world', 5) returns 'hello...' or 'he...' (functional verification, ≤5+ellipsis chars)",
+    "normalize('  hello   world  ') returns 'hello world' (functional verification)",
+    "With-skill subagent called TeamDelete on cleanup"
+  ]
+}

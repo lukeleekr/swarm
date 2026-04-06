@@ -1,0 +1,1 @@
+{"total_tokens": 0, "duration_ms": 5000, "total_duration_seconds": 5.0, "note": "parent context: 3 teammates spawned in parallel via Native AgentTeam, all 3 result files appeared within 5 seconds wall time. Token count not measured for parent-side dispatch."}

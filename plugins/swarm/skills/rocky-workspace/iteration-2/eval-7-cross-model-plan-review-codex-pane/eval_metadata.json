@@ -1,0 +1,18 @@
+{
+  "eval_id": 7,
+  "eval_name": "cross-model-plan-review-codex-pane",
+  "prompt": "A Claude orchestrator wrote 2 task files at /tmp/rocky-eval-plan/.swarm/sess-test-plan/tasks/. Use the Phase 2.5 plan review gate to spawn a Codex reviewer pane and get its assessment of the plan.",
+  "expected_tier": "Phase 2.5.2 plan reviewer (Codex pane spawn)",
+  "expected_behavior": "With-skill subagent should source swarm-transport.sh, swarm_spawn_agent a Codex reviewer pane, swarm_pipe_prompt with the Phase 2.5.2 standard reviewer prompt, swarm_poll_result for plan-review-standard.result, verify Status: APPROVED/NEEDS_REVISION format.",
+  "fixture_dir": "/tmp/rocky-eval-plan",
+  "session_dir": "/tmp/rocky-eval-plan/.swarm/sess-test-plan",
+  "assertions": [
+    "With-skill subagent successfully sourced swarm-transport.sh",
+    "With-skill subagent spawned a real Codex reviewer pane via swarm_spawn_agent",
+    "With-skill subagent piped the Phase 2.5.2 reviewer prompt",
+    "Codex read the task files at /tmp/rocky-eval-plan/.swarm/sess-test-plan/tasks/",
+    "A plan-review-standard.result file was written with Status: APPROVED or NEEDS_REVISION format",
+    "Review demonstrates understanding of the 2-task plan (e.g., notes the dependency from task-002 to task-001)",
+    "With-skill subagent killed the Codex pane on cleanup"
+  ]
+}

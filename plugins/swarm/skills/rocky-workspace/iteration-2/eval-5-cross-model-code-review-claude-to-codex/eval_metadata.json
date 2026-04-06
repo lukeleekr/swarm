@@ -1,0 +1,17 @@
+{
+  "eval_id": 5,
+  "eval_name": "cross-model-code-review-claude-to-codex",
+  "prompt": "Review the diff in /tmp/rocky-eval-codereview between HEAD~1..HEAD using cross-model code review. Claude wrote the code (well, the original commit author) — Codex should review.",
+  "expected_tier": "Phase 4.3a (cross-model code review path)",
+  "expected_behavior": "With-skill subagent should source swarm-transport.sh, swarm_spawn_agent a Codex pane, swarm_pipe_prompt with 'superpowers:requesting-code-review' invocation, swarm_poll_result for the review file, verify the result has Status: APPROVED/NEEDS_REVISION format, kill the pane.",
+  "fixture_dir": "/tmp/rocky-eval-codereview",
+  "assertions": [
+    "With-skill subagent successfully sourced swarm-transport.sh",
+    "With-skill subagent spawned a real Codex pane via swarm_spawn_agent",
+    "With-skill subagent piped a prompt mentioning 'superpowers:requesting-code-review'",
+    "Codex actually loaded the Superpowers requesting-code-review skill (verified via review output structure or transcript signal)",
+    "A review.result file was written by Codex with Status: APPROVED or NEEDS_REVISION format",
+    "Review identified the missing zero-check bug in divide() OR the missing test for multiply()",
+    "With-skill subagent killed the Codex pane on cleanup"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "eval_id": 4,
+  "eval_name": "tier3-codex-parallel-mini-projects",
+  "prompt": "have 3 codex agents build 3 mini Python projects in parallel: a calculator module, a file utilities module (read/write/atomic-replace), and a string utilities module (slugify/truncate/normalize). each in its own directory under projects/, fully independent files. i want to watch them work in tmux panes",
+  "expected_tier": 3,
+  "expected_decision_a": "Codex (default, no --agents flag)",
+  "expected_decision_b": "Codex panes via swarm_spawn_agent in wave layout (3 panes, bash transport)",
+  "expected_announcement_pattern": "Tier 3, Codex parallel",
+  "assertions": [
+    "Output classifies the task as Tier 3",
+    "Decision A is Codex (default, no --agents flag)",
+    "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport",
+    "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)",
+    "Output names Codex pane as the plan reviewer (Phase 2.5)",
+    "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b — opposite-model from Codex coder)",
+    "Output does NOT use Native AgentTeam (that variant requires --agents claude)"
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "expectations": [
+    {
+      "text": "Output classifies the task as Tier 3",
+      "passed": false,
+      "evidence": "Baseline does not use Tier framework. Picks parallel mcp__codex__codex calls."
+    },
+    {
+      "text": "Decision A is Codex (default, no --agents flag)",
+      "passed": false,
+      "evidence": "Baseline does pick Codex as the coder, but via the wrong transport (MCP, not bash). The 'Decision A' framework is rocky-specific and not used."
+    },
+    {
+      "text": "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport",
+      "passed": false,
+      "evidence": "CRITICAL: Baseline picks 'mcp__codex__codex MCP tool' instead of swarm_spawn_agent. Wrong transport. Lacks the visual pane orchestration the user explicitly requested ('watch them work in tmux panes' — baseline acknowledges this is a workaround, not literal Codex panes)."
+    },
+    {
+      "text": "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)",
+      "passed": false,
+      "evidence": "DIRECT HARD RULE VIOLATION: Baseline says 'Spawn 3 Codex agents in parallel via the mcp__codex__codex MCP tool, one per mini-project'. This is exactly the protocol violation rocky's first hard rule prohibits."
+    },
+    {
+      "text": "Output names Codex pane as the plan reviewer (Phase 2.5)",
+      "passed": false,
+      "evidence": "CRITICAL MISS: Baseline has NO plan review at all. Skips Phase 2.5. The COORDINATION field even says 'None needed at runtime'."
+    },
+    {
+      "text": "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b — opposite-model from Codex coder)",
+      "passed": false,
+      "evidence": "CRITICAL MISS: Baseline does the review itself with Read + pytest + Karpathy sanity check, but does NOT invoke superpowers:requesting-code-review. The cross-model rule (Codex coder → Claude reviewer) is not articulated as a rule — it's accidentally satisfied because the orchestrator IS Claude, but no formal review skill is invoked."
+    },
+    {
+      "text": "Output does NOT use Native AgentTeam (that variant requires --agents claude)",
+      "passed": true,
+      "evidence": "Baseline does not use Native AgentTeam (uses MCP instead). Technically passes this assertion."
+    }
+  ],
+  "summary": {"passed": 1, "failed": 6, "total": 7, "pass_rate": 0.143},
+  "timing": {"executor_duration_seconds": 73.2, "total_tokens": 35582},
+  "claims": [
+    {
+      "claim": "mcp__codex__codex is the right tool for parallel Codex dispatch",
+      "type": "process",
+      "verified": false,
+      "evidence": "Rocky's HARD RULE explicitly forbids mcp__codex__codex for agent dispatch. The baseline directly violates the rule it has no way of knowing about. This is the strongest signal in the entire eval set: the skill's value is preventing exactly this protocol violation."
+    },
+    {
+      "claim": "Self-review (Read + pytest + Karpathy) is sufficient code review",
+      "type": "quality",
+      "verified": false,
+      "evidence": "Baseline does the review itself rather than dispatching to a separate code-reviewer subagent. Loses the independence guarantee of cross-model review. Rocky enforces a separate Skill('superpowers:requesting-code-review') call that spawns a fresh code-reviewer subagent."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "reason": "This eval is the headline result of the entire iteration. It should be in any future demo or presentation of rocky. The hard-rule violation by the baseline is unmistakable, the cross-model miss is unmistakable, and the visual-pane miss is unmistakable. Three independent value props of the skill all demonstrated in one test."
+      }
+    ],
+    "overall": "Most discriminating eval in the set. Rocky prevents a hard-rule violation here that baseline commits without hesitation."
+  }
+}

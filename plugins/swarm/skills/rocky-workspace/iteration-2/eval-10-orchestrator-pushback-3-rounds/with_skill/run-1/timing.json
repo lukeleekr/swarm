@@ -1,0 +1,1 @@
+{"total_tokens": 0, "duration_ms": 540000, "total_duration_seconds": 540.0, "note": "wall time across 4 Codex turns (1 initial + 3 pushback). Token count not measured (parent-driven, not subagent)"}

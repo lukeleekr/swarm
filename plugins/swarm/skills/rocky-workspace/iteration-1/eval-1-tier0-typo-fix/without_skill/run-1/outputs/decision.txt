@@ -1,0 +1,4 @@
+MECHANISM: I would do this inline myself with a single Edit tool call: Edit(file_path="/tmp/notes.md", old_string="reciever", new_string="receiver"). Since the file is only 12 lines, I'd first do a quick Read to satisfy the Edit tool's read-before-edit requirement, then the single Edit call. Total: 2 tool calls, no subagents.
+COORDINATION: N/A
+REVIEW: N/A — a one-character typo fix on a known line in a 12-line file is self-verifying. The Edit tool will fail loudly if "reciever" isn't found or isn't unique, which is sufficient confirmation. No code-reviewer agent needed.
+REASONING: Spawning a subagent for a single-character string replacement would cost orders of magnitude more tokens and latency than just doing it. Karpathy rule: no abstractions for trivial work. This is the canonical "just do it inline" case — small, well-specified, deterministic, no judgment calls.

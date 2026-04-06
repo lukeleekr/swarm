@@ -1,0 +1,41 @@
+{
+  "expectations": [
+    {
+      "text": "Output classifies the task as Tier 3",
+      "passed": true,
+      "evidence": "tier-decision.txt: 'TIER: 3'"
+    },
+    {
+      "text": "Decision A is Codex (default, no --agents flag)",
+      "passed": true,
+      "evidence": "DECISION A: 'Codex — no --agents flag passed, default coder identity for Tier 3 is Codex (per Decision A table: \"default → Codex\")'"
+    },
+    {
+      "text": "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport",
+      "passed": true,
+      "evidence": "DECISION B: 'Multiple Codex panes via swarm_spawn_agent in wave layout (Phase 3.3 wave dispatch, bash transport via swarm-transport.sh)'"
+    },
+    {
+      "text": "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)",
+      "passed": true,
+      "evidence": "DECISION B: 'NOT mcp__codex__codex (HARD RULE forbids MCP for dispatch)'"
+    },
+    {
+      "text": "Output names Codex pane as the plan reviewer (Phase 2.5)",
+      "passed": true,
+      "evidence": "CROSS-MODEL: 'Plan reviewer = Codex pane (Phase 2.5.2 spawns it — Codex pane is always the plan reviewer per the cross-model rule recap, regardless of coder identity)'"
+    },
+    {
+      "text": "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b — opposite-model from Codex coder)",
+      "passed": true,
+      "evidence": "CROSS-MODEL: 'Code reviewer = Claude Opus in-process via Skill(\"superpowers:requesting-code-review\") (Phase 4.3b) — because the coder is Codex, the opposite-model code reviewer is Claude Opus per the rule \"Codex coder → Claude reviews\"'"
+    },
+    {
+      "text": "Output does NOT use Native AgentTeam (that variant requires --agents claude)",
+      "passed": true,
+      "evidence": "DECISION B: 'NOT Native AgentTeam (that's the Tier 3 + --agents claude variant)'"
+    }
+  ],
+  "summary": {"passed": 7, "failed": 0, "total": 7, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 80.0, "total_tokens": 47553}
+}

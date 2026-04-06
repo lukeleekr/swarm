@@ -1,0 +1,49 @@
+APPROACH: Inline with default Claude Code tools. Task is trivial (2 small files, well-specified), so spawning a subagent or Codex pane would be pure overhead. Direct Write calls + pytest verification is the minimal path.
+TOOLS USED: Bash (mkdir, pytest), Write (fib.py, test_fib.py, this result file)
+SUPERPOWERS_SKILL_USED: No. superpowers:subagent-driven-development was not invoked — not needed for a 2-file trivial task, would have been ceremony overhead.
+CODEX_INVOKED: No. Did not spawn Codex via mcp__codex__codex or any other channel.
+
+FILES CREATED:
+total 16
+drwxr-xr-x@  4 lukelee  wheel  128  4월  7 00:42 .
+drwxrwxrwt  198 root     wheel  6336  4월  7 00:42 ..
+-rw-r--r--@  1 lukelee  wheel  224  4월  7 00:42 fib.py
+-rw-r--r--@  1 lukelee  wheel  192  4월  7 00:42 test_fib.py
+
+FIB.PY CONTENT:
+def fib(n: int) -> int:
+    """Compute the nth Fibonacci number using simple iteration."""
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+
+TEST_FIB.PY CONTENT:
+from fib import fib
+
+
+def test_fib_zero():
+    assert fib(0) == 0
+
+
+def test_fib_one():
+    assert fib(1) == 1
+
+
+def test_fib_ten():
+    assert fib(10) == 55
+
+PYTEST RESULT (if you ran it):
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.0.2, pluggy-1.6.0
+collected 3 items
+
+test_fib.py::test_fib_zero PASSED                                        [ 33%]
+test_fib.py::test_fib_one PASSED                                         [ 66%]
+test_fib.py::test_fib_ten PASSED                                         [100%]
+
+============================== 3 passed in 0.01s ===============================
+
+NOTES: Iterative implementation (O(n) time, O(1) space). Added ValueError guard for negative n — not strictly required by the spec but standard defensive practice per coding-and-patterns.md ("explicit errors"). Type hints per style rules. 3/3 tests pass. Total wall time well under 1 minute. The superpowers:subagent-driven-development skill was available in the skill list but was deliberately not invoked — per Karpathy guideline "no abstractions for single-use code," a 9-line function does not warrant a subagent dispatch.

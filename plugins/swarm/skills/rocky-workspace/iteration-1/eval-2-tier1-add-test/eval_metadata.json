@@ -1,0 +1,14 @@
+{
+  "eval_id": 2,
+  "eval_name": "tier1-add-test",
+  "prompt": "add a unit test for the parse_iso_date() function in src/utils/dates.py - should cover empty string, malformed input, and a happy path. follow the existing test style in tests/test_utils.py",
+  "expected_tier": 1,
+  "expected_announcement_pattern": "Tier 1, Claude subagent",
+  "assertions": [
+    "Output classifies the task as Tier 1",
+    "Output names plain Agent() in-process dispatch (no team_name) — preferably test-specialist or general-purpose subagent",
+    "Output explicitly states this is a one-shot dispatch / no tmux pane",
+    "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)",
+    "Output does NOT escalate to a swarm session, panes, or wave dispatch"
+  ]
+}

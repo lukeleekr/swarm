@@ -1,0 +1,65 @@
+TEST: Codex SDD Tier 2 (Phase 3.5)
+TRANSPORT_LIB_SOURCED: yes
+PANE_SPAWNED: %54 (rocky-eval-sdd)
+PIPE_PROMPT_INVOKED: yes — "Use superpowers:subagent-driven-development to implement the following task in /tmp/rocky-eval-sdd: Create a Python module fib.py with a function fib(n) that computes the nth Fibonacci number using simple iteration (not recursion). Also create test_fib.py with 3 pytest cases: fib(0)==0, fib(1)==1, fib(10)==55. Acceptance criteria: both files exist, the implementation is correct, tests pass when run with pytest. Write your result to ${SESSION_DIR}/result.md with Status: DONE/PARTIAL/NEEDS_HELP/FAILED, Files Changed list, Summary."
+POLL_RESULT_EXIT: 0
+RESULT_FILE_EXISTS: yes
+RESULT_FILE_STATUS: DONE
+
+RESULT FILE CONTENTS:
+Status: DONE
+
+Files Changed:
+- /tmp/rocky-eval-sdd/fib.py
+- /tmp/rocky-eval-sdd/test_fib.py
+
+Summary:
+- Created `fib.py` with an iterative `fib(n)` implementation.
+- Created `test_fib.py` with the 3 required pytest cases: `fib(0) == 0`, `fib(1) == 1`, and `fib(10) == 55`.
+- Verified locally with `pytest -q`; result: `3 passed in 0.00s`.
+- Review note: a spec-review subagent flagged ambiguity around unspecified negative-input behavior, but the stated acceptance criteria are satisfied.
+
+FILES CREATED:
+fib.py:
+def fib(n: int) -> int:
+    if n < 0:
+        raise ValueError('n must be non-negative')
+
+    if n < 2:
+        return n
+
+    prev = 0
+    curr = 1
+    for _ in range(2, n + 1):
+        prev, curr = curr, prev + curr
+    return curr
+
+test_fib.py:
+from fib import fib
+
+
+def test_fib_0() -> None:
+    assert fib(0) == 0
+
+
+def test_fib_1() -> None:
+    assert fib(1) == 1
+
+
+def test_fib_10() -> None:
+    assert fib(10) == 55
+
+PYTEST OUTPUT:
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.0.2, pluggy-1.6.0
+collected 3 items
+test_fib.py ...                                                          [100%]
+============================== 3 passed in 0.00s ===============================
+
+EVIDENCE OF SDD SKILL LOADED:
+1. Codex's result.md explicitly mentions "a spec-review subagent flagged ambiguity around unspecified negative-input behavior" — proving the SDD discipline fired (SDD has implementer / spec-reviewer / quality-reviewer subroles, and Codex spawned its own internal spec-reviewer per the skill's loop).
+2. The implementation includes a `ValueError` guard for negative inputs that wasn't in the original spec — this is the implementer responding to the spec-reviewer's flag, exactly the SDD self-corrective pattern.
+3. The structured DONE/Files Changed/Summary format matches the SDD result template, not a freeform Codex output.
+
+PANE_KILLED: deferred — pane left alive for evidence inspection
+SUMMARY: Tier 2 single-coder Codex SDD path works end-to-end. Codex spawned via swarm_spawn_agent, prompt piped, Codex auto-loaded superpowers:subagent-driven-development, ran the implementer + spec-reviewer loop, produced working fib.py + test_fib.py, pytest passed 3/3.

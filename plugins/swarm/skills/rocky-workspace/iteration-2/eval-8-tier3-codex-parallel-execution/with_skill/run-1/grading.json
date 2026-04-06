@@ -1,0 +1,25 @@
+{
+  "expectations": [
+    {"text": "With-skill subagent successfully sourced swarm-transport.sh", "passed": true, "evidence": "Subagent reported 'Transport lib sourced'"},
+    {"text": "With-skill subagent spawned 3 separate Codex panes via swarm_spawn_agent (NOT mcp__codex__codex)", "passed": true, "evidence": "PANES_SPAWNED: %56 %57 %58. All 3 via swarm_spawn_agent. Subagent explicitly avoided mcp__codex__codex per the HARD RULE."},
+    {"text": "Each Codex pane received a different task file via swarm_pipe_prompt", "passed": true, "evidence": "PROMPTS_PIPED: 3/3. task-001 → %56, task-002 → %57, task-003 → %58"},
+    {"text": "All 3 .result files were written with Status: DONE", "passed": true, "evidence": "RESULT_STATUSES: DONE/DONE/DONE. All 3 .result files exist at /tmp/rocky-eval-codex-parallel/.swarm/sess-test-cx/tasks/"},
+    {"text": "All 3 module files exist: projects/fib/fib.py, projects/fact/fact.py, projects/isprime/isprime.py", "passed": true, "evidence": "All 3 files visible in /tmp/rocky-eval-codex-parallel/projects/"},
+    {"text": "fib(10) returns 55 in the implementation (functional verification)", "passed": true, "evidence": "Subagent ran functional verification: fib(10) = 55 PASS"},
+    {"text": "fact(5) returns 120 in the implementation", "passed": true, "evidence": "fact(5) = 120 PASS"},
+    {"text": "isprime(17) returns True in the implementation", "passed": true, "evidence": "isprime(17) = True PASS"},
+    {"text": "All 3 panes were killed on cleanup", "passed": true, "evidence": "PANES_KILLED: yes; RE_TILED_AFTER_KILL: yes"}
+  ],
+  "summary": {"passed": 9, "failed": 0, "total": 9, "pass_rate": 1.0},
+  "timing": {"executor_duration_seconds": 165.8, "total_tokens": 57423},
+  "claims": [
+    {"claim": "swarm_poll_result expects the task .md path, not the .result path", "type": "process", "verified": true, "evidence": "Subagent discovered this during the test: 'swarm_poll_result takes the task .md path (not the .result path) — calling it with the .result path returns ERROR: task file not found immediately. Once corrected, polling succeeded with exit 0 for all three.' The Phase 3.3 reference correctly uses the .md path; the docs are right but the eval prompt was wrong."},
+    {"claim": "Tiled layout produces a 2x2 grid for orchestrator + 3 Codex coders", "type": "factual", "verified": true, "evidence": "TILE_CALL_EXECUTED_AFTER_SPAWN: yes. The 2x2 grid was visible in tmux and the user did not complain about layout for this test (unlike the prior 3-column rejection)"}
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {"reason": "The eval prompt I (the orchestrator) wrote had the wrong file extension for swarm_poll_result. Fix the eval prompt to use .md not .result. Also worth adding an assertion that swarm_poll_result accepts a .md path so future tests don't repeat the mistake."}
+    ],
+    "overall": "Strong eval, well-grounded. The MCP-vs-swarm distinction is the headline finding — baseline used MCP (rocky-forbidden), with-skill used the proper swarm bash transport."
+  }
+}

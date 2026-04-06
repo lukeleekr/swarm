@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "tier0-typo-fix",
+  "prompt": "fix the typo 'reciever' -> 'receiver' on line 3 of /tmp/notes.md (file is 12 lines total). just a quick one-character thing",
+  "expected_tier": 0,
+  "expected_announcement_pattern": "Tier 0, Opus inline. No dispatch.",
+  "assertions": [
+    "Output classifies the task as Tier 0",
+    "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase",
+    "Output explicitly states the transport library is not sourced",
+    "Output explicitly states cross-model rule does not apply (per the trivial-work exception)"
+  ]
+}
