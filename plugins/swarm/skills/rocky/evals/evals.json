@@ -1,0 +1,59 @@
+{
+  "skill_name": "rocky",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "fix the typo 'reciever' -> 'receiver' on line 3 of /tmp/notes.md (file is 12 lines total). just a quick one-character thing",
+      "expected_output": "Phase 0.0 should classify as Tier 0 (Opus inline). The router should refuse to spawn agents or source the transport library.",
+      "files": [],
+      "expectations": [
+        "Output classifies the task as Tier 0",
+        "Announcement matches 'Tier 0, Opus inline. No dispatch.' or close paraphrase",
+        "Output explicitly states the transport library is not sourced",
+        "Output explicitly states cross-model rule does not apply (per the trivial-work exception)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "add a unit test for the parse_iso_date() function in src/utils/dates.py - should cover empty string, malformed input, and a happy path. follow the existing test style in tests/test_utils.py",
+      "expected_output": "Phase 0.0 should classify as Tier 1 (plain Agent in-process). Recommend dispatching to the test-specialist subagent or general-purpose Agent. No swarm session, no panes.",
+      "files": [],
+      "expectations": [
+        "Output classifies the task as Tier 1",
+        "Output names plain Agent() in-process dispatch (no team_name) — preferably test-specialist or general-purpose subagent",
+        "Output explicitly states this is a one-shot dispatch / no tmux pane",
+        "Output explicitly states cross-model rule does not apply (per the mechanical-work exception)",
+        "Output does NOT escalate to a swarm session, panes, or wave dispatch"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "implement user authentication with JWT for our FastAPI service. need: User model with email+password, password hashing via argon2, JWT generation/verification, 5 endpoints (signup, login, logout, refresh, me), auth middleware, and tests for each endpoint. use claude only - i don't want to spawn codex panes for this one, keep it inside the same opus session",
+      "expected_output": "Phase 0.0 should classify as Tier 2 (SDD). Decision A picks Claude (--agents claude). Decision B picks the in-process Skill('superpowers:subagent-driven-development') sub-mode. Codex is still the plan reviewer in Phase 2.5. Code reviewer is Codex (cross-model from Claude coder).",
+      "files": [],
+      "expectations": [
+        "Output classifies the task as Tier 2",
+        "Decision A is Claude (honors --agents claude flag from 'use claude only')",
+        "Decision B is in-process Skill('superpowers:subagent-driven-development') invocation",
+        "Output explicitly states NO tmux pane / NO swarm_spawn_agent / NO fresh Claude process",
+        "Output names Codex pane as the plan reviewer (Phase 2.5)",
+        "Output names Codex (cross-model) as the code reviewer via Phase 4.3a / superpowers:requesting-code-review"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "have 3 codex agents build 3 mini Python projects in parallel: a calculator module, a file utilities module (read/write/atomic-replace), and a string utilities module (slugify/truncate/normalize). each in its own directory under projects/, fully independent files. i want to watch them work in tmux panes",
+      "expected_output": "Phase 0.0 should classify as Tier 3 (parallel multi-coder). Decision A picks Codex (default, no --agents flag). Decision B picks bash-spawned Codex panes via swarm_spawn_agent in wave layout. 3 panes for 3 tasks. Plan reviewer + code reviewer (Claude Opus, cross-model from Codex coders) both mandatory.",
+      "files": [],
+      "expectations": [
+        "Output classifies the task as Tier 3",
+        "Decision A is Codex (default, no --agents flag)",
+        "Decision B is multiple Codex panes via swarm_spawn_agent / Phase 3.3 wave dispatch / bash transport",
+        "Output explicitly forbids mcp__codex__codex per the HARD RULE (no MCP for dispatch)",
+        "Output names Codex pane as the plan reviewer (Phase 2.5)",
+        "Output names Claude Opus in-process via Skill('superpowers:requesting-code-review') as the code reviewer (Phase 4.3b — opposite-model from Codex coder)",
+        "Output does NOT use Native AgentTeam (that variant requires --agents claude)"
+      ]
+    }
+  ]
+}
