@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # swarm-transport.sh — Multiplexer abstraction + file protocol for swarm plugin
 # Source this in the skill: source ~/.claude/local-plugins/plugins/swarm/lib/swarm-transport.sh
-
-set -euo pipefail
+#
+# NOTE: This library deliberately does NOT set `set -euo pipefail` at the top
+# level — doing so leaks strict mode into the caller's shell and crashes on
+# unset vars (e.g. ${REVIEW_PANES[@]} when empty). Individual functions should
+# handle errors explicitly.
 
 # ── Multiplexer Detection ─────────────────────────────────────────
 
@@ -15,6 +18,15 @@ swarm_detect_mux() {
     echo "none"
   fi
 }
+
+# Initialize MUX cache. Re-validates on every source if the current environment
+# disagrees with the cached value (handles: source outside mux → enter mux,
+# in any direction: none↔tmux↔cmux).
+_swarm_current_mux=$(swarm_detect_mux)
+if [[ -z "${_SWARM_MUX:-}" ]] || [[ "${_SWARM_MUX}" != "${_swarm_current_mux}" ]]; then
+  _SWARM_MUX="${_swarm_current_mux}"
+fi
+unset _swarm_current_mux
 
 # ── Session Management ────────────────────────────────────────────
 
@@ -105,8 +117,7 @@ swarm_spawn_agent() {
   local session_dir="$4"
   local split_dir="${5:-right}"    # right or down
   local split_from="${6:-}"        # surface to split from (optional)
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
 
   local pane_id=""
   case "${mux}" in
@@ -131,17 +142,32 @@ swarm_spawn_agent() {
       # Map split_dir to tmux flags: right=-h, down=-v
       local tmux_split_flag="-h"
       [[ "${split_dir}" == "down" ]] && tmux_split_flag="-v"
-      # tmux -c sets workdir; command passed as separate arg (no string interpolation)
+      # Capture stderr to session log so spawn failures are visible.
+      # Wrap the CLI in `bash -c 'cmd; exec bash'` so the pane survives a CLI
+      # crash — symmetric with cmux which runs a shell underneath.
+      local spawn_err="${session_dir}/logs/spawn-${name}.err"
+      mkdir -p "${session_dir}/logs" 2>/dev/null
+      local wrapped="${command}; exec bash"
       if [[ -n "${split_from}" ]]; then
-        pane_id=$(tmux split-window ${tmux_split_flag} -t "${split_from}" -d -c "${workdir}" -P -F '#{pane_id}' -- "${command}" 2>/dev/null || echo "")
+        pane_id=$(tmux split-window ${tmux_split_flag} -t "${split_from}" -d -c "${workdir}" -P -F '#{pane_id}' -- bash -c "${wrapped}" 2>"${spawn_err}")
       else
-        pane_id=$(tmux split-window ${tmux_split_flag} -d -c "${workdir}" -P -F '#{pane_id}' -- "${command}" 2>/dev/null || echo "")
+        pane_id=$(tmux split-window ${tmux_split_flag} -d -c "${workdir}" -P -F '#{pane_id}' -- bash -c "${wrapped}" 2>"${spawn_err}")
+      fi
+      if [[ -z "${pane_id}" ]]; then
+        echo "ERROR: tmux split-window failed for ${name}: $(cat "${spawn_err}" 2>/dev/null)" >&2
+        return 1
       fi
       ;;
     none)
       local log_file="${session_dir}/logs/${name}.log"
-      # Use exec "$@" to avoid eval; command is word-split intentionally (simple CLI invocations)
-      nohup bash -c 'cd "$1" && shift && exec "$@"' _ "${workdir}" ${command} > "${log_file}" 2>&1 &
+      mkdir -p "${session_dir}/logs" 2>/dev/null
+      # `${command}` is a single shell-quoted command string from the registry
+      # (e.g. `python3 -c 'import sys; print(sys.argv[1])' 'hello world'`).
+      # `read -a` would re-split and lose the quoting, so we delegate parsing
+      # to a real shell via `bash -c "${command}"`. This preserves quoted args
+      # exactly as the registry author wrote them.
+      nohup bash -c "cd $(printf '%q' "${workdir}") && exec ${command}" \
+        > "${log_file}" 2>&1 &
       pane_id="pid:$!"
       ;;
   esac
@@ -155,8 +181,7 @@ swarm_wait_agent_ready() {
   # Returns 0 when ready, 1 on timeout.
   local pane_id="$1"
   local timeout="${2:-30}"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
 
   [[ "${mux}" == "none" ]] && return 0  # headless: always ready
 
@@ -164,13 +189,17 @@ swarm_wait_agent_ready() {
   while (( elapsed < timeout )); do
     local screen
     case "${mux}" in
-      cmux) screen=$(cmux read-screen --surface "${pane_id}" --lines 10 2>/dev/null || echo "") ;;
-      tmux) screen=$(tmux capture-pane -t "${pane_id}" -p -l 10 2>/dev/null || echo "") ;;
+      cmux) screen=$(cmux read-screen --surface "${pane_id}" --lines 25 2>/dev/null) ;;
+      tmux) screen=$(tmux capture-pane -t "${pane_id}" -p 2>/dev/null) ;;
       *)    return 0 ;;
     esac
+    screen="${screen:-}"
 
-    # Detect trust/folder prompts and auto-accept by pressing Enter
-    if echo "${screen}" | grep -qiE 'trust.*(folder|directory|contents)|Do you trust'; then
+    # Detect trust/approval prompts and auto-accept
+    # Numbered menu (Codex): "Yes, continue" pre-selected → just Enter
+    # Text Y/n prompt → send "y" + Enter
+    if echo "${screen}" | grep -qiE \
+        'trust.*(folder|directory|contents)|Do you trust|Press enter to continue|Yes,.*continue'; then
       case "${mux}" in
         cmux) cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true ;;
         tmux) tmux send-keys -t "${pane_id}" Enter 2>/dev/null || true ;;
@@ -179,12 +208,37 @@ swarm_wait_agent_ready() {
       elapsed=$((elapsed + 3))
       continue
     fi
+    if echo "${screen}" | grep -qiE '\(Y\/n\)|\[Y\/n\]|Allow.*access|approve.*path|grant.*access|allow codex'; then
+      case "${mux}" in
+        cmux)
+          cmux send --surface "${pane_id}" "y" 2>/dev/null || true
+          cmux send-key --surface "${pane_id}" Enter 2>/dev/null || true
+          ;;
+        tmux) tmux send-keys -t "${pane_id}" "y" Enter 2>/dev/null || true ;;
+      esac
+      sleep 3
+      elapsed=$((elapsed + 3))
+      continue
+    fi
 
-    # Agent ready patterns:
-    # Codex: ">" or "›" at line start (input prompt)
-    # Claude: "❯" or ">" at line start
-    # Shell: "$" or "%" at end of line
-    if echo "${screen}" | grep -qE '(^[>❯›] |[$%] *$)'; then
+    # Agent ready detection — two signals:
+    # (1) Whole-screen markers for TUI apps in steady state
+    # (2) Last non-empty line looks like a CLI prompt
+    # Both gated to avoid pytest-output false positives like "25% left" in test output.
+    if echo "${screen}" | grep -qE \
+        '·[[:space:]]+[0-9]+%[[:space:]]+left|bypass permissions on|Context [░▒▓█]'; then
+      return 0
+    fi
+    local last_line
+    last_line=$(printf '%s\n' "${screen}" | awk 'NF {last=$0} END {print last}')
+    # Prompt detection on the last non-empty line.
+    # Shell prompt: ends with $/%/# possibly followed by space.
+    #   Examples that match: "bash-3.2$", "user@host ~ %", "root@box # "
+    #   Excludes "</div>" or "10 > 5" because we require $/%/# (not >).
+    # REPL prompt: ">" only when at start of line (e.g. "> ") or "❯/›" prefix.
+    #   "10 > 5" won't match because > is mid-line, not at start.
+    if [[ "${last_line}" =~ [\$%#][[:space:]]*$ ]] \
+       || [[ "${last_line}" =~ ^[\>❯›][[:space:]] ]]; then
       return 0
     fi
     sleep 2
@@ -195,8 +249,7 @@ swarm_wait_agent_ready() {
 
 swarm_kill_agent() {
   local pane_id="$1"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
 
   case "${mux}" in
     cmux)
@@ -217,6 +270,14 @@ swarm_kill_agent() {
       fi
       ;;
     tmux)
+      # Mirror cmux graceful sequence: Ctrl-C → /exit → exit → kill-pane
+      # Gives Codex/Claude CLI a chance to flush state before force-kill.
+      tmux send-keys -t "${pane_id}" C-c 2>/dev/null || true
+      sleep 0.5
+      tmux send-keys -t "${pane_id}" "/exit" Enter 2>/dev/null || true
+      sleep 1
+      tmux send-keys -t "${pane_id}" "exit" Enter 2>/dev/null || true
+      sleep 0.5
       tmux kill-pane -t "${pane_id}" 2>/dev/null || true
       ;;
     none)
@@ -234,15 +295,14 @@ swarm_kill_agent() {
 
 swarm_check_agent_alive() {
   local pane_id="$1"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
 
   case "${mux}" in
     cmux)
       cmux read-screen --surface "${pane_id}" --lines 1 >/dev/null 2>&1
       ;;
     tmux)
-      tmux display-message -p -t "${pane_id}" '' 2>/dev/null
+      tmux display-message -p -t "${pane_id}" '#{pane_id}' >/dev/null 2>&1
       ;;
     none)
       if [[ "${pane_id}" == pid:* ]]; then
@@ -316,8 +376,7 @@ swarm_poll_result() {
 swarm_pipe_prompt() {
   local pane_id="$1"
   local prompt="$2"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
 
   # Wait for agent to be ready before sending
   if [[ "${mux}" != "none" ]]; then
@@ -332,7 +391,38 @@ swarm_pipe_prompt() {
       cmux send-key --surface "${pane_id}" Enter >/dev/null 2>&1
       ;;
     tmux)
-      tmux send-keys -t "${pane_id}" "${prompt}" Enter 2>/dev/null
+      # CRITICAL: use load-buffer + paste-buffer for multi-line safety.
+      # `tmux send-keys "${prompt}" Enter` treats embedded \n as Enter keypresses,
+      # so any multi-line prompt gets submitted at the first newline.
+      # Writing the prompt to a buffer and pasting preserves exact content.
+      #
+      # Hard rule: ALWAYS send Enter as a separate keystroke after the paste.
+      # Codex/Claude CLIs do not auto-submit on paste — Enter must be explicit.
+      local tmp_buf buf_name="swarm-prompt-$$"
+      tmp_buf=$(mktemp -t swarm-prompt.XXXXXX)
+      printf '%s' "${prompt}" > "${tmp_buf}"
+      _swarm_pp_cleanup() {
+        rm -f "${tmp_buf}"
+        tmux delete-buffer -b "${buf_name}" 2>/dev/null || true
+      }
+      if ! tmux load-buffer -b "${buf_name}" "${tmp_buf}" 2>/dev/null; then
+        echo "ERROR: tmux load-buffer failed for pane ${pane_id}" >&2
+        _swarm_pp_cleanup
+        return 1
+      fi
+      if ! tmux paste-buffer -b "${buf_name}" -d -t "${pane_id}" 2>/dev/null; then
+        echo "ERROR: tmux paste-buffer failed for pane ${pane_id}" >&2
+        _swarm_pp_cleanup
+        return 1
+      fi
+      # Small settle for Codex TUI to absorb the paste before Enter.
+      sleep 0.3
+      if ! tmux send-keys -t "${pane_id}" Enter 2>/dev/null; then
+        echo "ERROR: tmux send-keys Enter failed for pane ${pane_id}" >&2
+        _swarm_pp_cleanup
+        return 1
+      fi
+      _swarm_pp_cleanup
       ;;
     none)
       # For background processes, prompt was already given at spawn time.
@@ -345,8 +435,7 @@ swarm_pipe_prompt() {
 
 swarm_set_status() {
   local role="$1"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
   if [[ "${mux}" == "cmux" ]]; then
     cmux set-status "role" "${role}" --icon "robot.fill" --color "#4CAF50" 2>/dev/null || true
   fi
@@ -355,8 +444,7 @@ swarm_set_status() {
 swarm_set_progress() {
   local label="$1"
   local progress="$2"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
   if [[ "${mux}" == "cmux" ]]; then
     cmux set-progress "${progress}" --label "${label}" 2>/dev/null || true
   fi
@@ -365,8 +453,7 @@ swarm_set_progress() {
 swarm_log() {
   local level="${1:-info}"
   local message="$2"
-  local mux
-  mux="$(swarm_detect_mux)"
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
   if [[ "${mux}" == "cmux" ]]; then
     cmux log --level "${level}" "${message}" 2>/dev/null || true
   fi
@@ -716,7 +803,10 @@ swarm_classify_task() {
 
   # Count files to touch
   local file_count=0
-  file_count=$(echo "${content}" | sed -n '/^## Files to Touch/,/^##/p' | grep -c '^- ' 2>/dev/null || echo "0")
+  # Note: `grep -c || echo "0"` double-prints when grep matches 0 (grep prints
+  # "0" AND exits 1). Use `|| true` to preserve grep's output only.
+  file_count=$(echo "${content}" | sed -n '/^## Files to Touch/,/^##/p' | grep -c '^- ' 2>/dev/null || true)
+  file_count="${file_count:-0}"
 
   # Check complex keywords first (highest priority)
   for kw in refactor architect design system migrate security optimize; do
@@ -769,8 +859,14 @@ swarm_get_revision_count() {
 }
 
 swarm_check_result_status() {
-  # Parse a .result file. Returns: DONE, FAILED, MISSING, MALFORMED, or INCOMPLETE.
-  # DONE requires Status: DONE + Files Changed field present.
+  # Parse a .result file. Returns one of:
+  #   DONE       — Status: DONE + Files Changed field present
+  #   PARTIAL    — Status: PARTIAL (agent made progress but hit a blocker)
+  #   NEEDS_HELP — Status: NEEDS_HELP (agent is uncertain)
+  #   FAILED     — Status: FAILED (agent could not proceed)
+  #   INCOMPLETE — Status: DONE but missing Files Changed
+  #   MISSING    — result file does not exist
+  #   MALFORMED  — no recognizable Status line
   local result_file="$1"
   if [[ ! -f "${result_file}" ]]; then
     echo "MISSING"
@@ -782,15 +878,21 @@ swarm_check_result_status() {
     echo "MALFORMED"
     return 0
   fi
-  if echo "${status_line}" | grep -qi "DONE"; then
+  # Order matters: check NEEDS_HELP before PARTIAL before DONE/FAILED
+  # to avoid substring collisions.
+  if echo "${status_line}" | grep -qi "NEEDS_HELP"; then
+    echo "NEEDS_HELP"
+  elif echo "${status_line}" | grep -qi "PARTIAL"; then
+    echo "PARTIAL"
+  elif echo "${status_line}" | grep -qi "FAILED"; then
+    echo "FAILED"
+  elif echo "${status_line}" | grep -qi "DONE"; then
     # Validate required fields for DONE
     if ! grep -iq '^Files Changed:' "${result_file}" 2>/dev/null; then
       echo "INCOMPLETE"
       return 0
     fi
     echo "DONE"
-  elif echo "${status_line}" | grep -qi "FAILED"; then
-    echo "FAILED"
   else
     echo "MALFORMED"
   fi

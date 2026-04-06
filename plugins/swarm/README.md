@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Claude_Code-Plugin-blueviolet?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMyAxNGgxOEwxMiAyeiIgZmlsbD0id2hpdGUiLz48L3N2Zz4=" alt="Claude Code Plugin"/>
-  <img src="https://img.shields.io/badge/Agents-Codex_%7C_Gemini_%7C_Claude-orange?style=for-the-badge" alt="Agents"/>
+  <img src="https://img.shields.io/badge/Agents-Codex_%7C_Claude-orange?style=for-the-badge" alt="Agents"/>
   <img src="https://img.shields.io/badge/Mux-CMUX_%7C_tmux-green?style=for-the-badge" alt="Multiplexer"/>
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License"/>
 </p>
@@ -152,11 +152,6 @@ agents:
     command_interactive: "codex --full-auto"
     roles: [coder]
     capabilities: [implement, debug]
-
-  gemini:
-    command_exec: "gemini --cli"
-    command_interactive: "gemini"
-    roles: [coder, designer]
 
   claude:
     command_exec: "claude --dangerously-skip-permissions -p"

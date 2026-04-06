@@ -14,7 +14,6 @@
 # Usage:
 #   /swarm <task>                  — uses role_priority to auto-select agents
 #   /swarm --agents codex <task>   — force specific agent(s)
-#   /swarm --agents gemini <task>  — use Gemini instead of Codex
 
 agents:
   codex:
@@ -28,23 +27,9 @@ agents:
       Your task is described in the file path provided.
       Implement the task in the codebase.
 
-      **Conversation protocol:**
-      If you need clarification mid-task, write your question to the same
-      path but with .question extension. Then WAIT for a .answer file to
-      appear at that path. Read the answer before continuing. Max 5 questions.
-
-      When done, write a result summary to the same path but with .result extension.
-      Include: Status (DONE/FAILED), files changed, and a brief summary.
-
-  gemini:
-    command_exec: "gemini --cli"
-    command_interactive: "gemini"
-    roles: [coder, designer]
-    capabilities: [implement, design]
-    init_prompt: |
-      You are a coding agent in a swarm orchestration.
-      Your task is described in the file path provided.
-      Implement the task in the codebase.
+      **Correctness over completion.** If constraints seem impossible or
+      mis-specified, explain the mismatch rather than working around it.
+      Reporting a blocker honestly is better than a forced solution.
 
       **Conversation protocol:**
       If you need clarification mid-task, write your question to the same
@@ -52,7 +37,7 @@ agents:
       appear at that path. Read the answer before continuing. Max 5 questions.
 
       When done, write a result summary to the same path but with .result extension.
-      Include: Status (DONE/FAILED), files changed, and a brief summary.
+      Include: Status (DONE/PARTIAL/NEEDS_HELP/FAILED), files changed, and a brief summary.
 
   claude:
     command_exec: "claude --dangerously-skip-permissions -p"
@@ -65,13 +50,17 @@ agents:
       Your task is described in the file path provided.
       Implement the task in the codebase.
 
+      **Correctness over completion.** If constraints seem impossible or
+      mis-specified, explain the mismatch rather than working around it.
+      Reporting a blocker honestly is better than a forced solution.
+
       **Conversation protocol:**
       If you need clarification mid-task, write your question to the same
       path but with .question extension. Then WAIT for a .answer file to
       appear at that path. Read the answer before continuing. Max 5 questions.
 
       When done, write a result summary to the same path but with .result extension.
-      Include: Status (DONE/FAILED), files changed, and a brief summary.
+      Include: Status (DONE/PARTIAL/NEEDS_HELP/FAILED), files changed, and a brief summary.
 
   # Template for adding new agents:
   # my_agent:
@@ -85,10 +74,9 @@ agents:
 # When the manager needs a role, it picks the first agent listed for that role.
 # Change the order to change the default.
 role_priority:
-  coder: [codex, gemini, claude]
+  coder: [codex, claude]
   # Review is cross-assigned (Phase 4): Claude wrote → Codex reviews; Codex wrote → Claude Opus reviews via superpowers:requesting-code-review
   researcher: [claude]
-  designer: [gemini]
 
 # Model routing for agents with supports_model_routing: true
 # Manager classifies each task and appends --model <model> to the command.
