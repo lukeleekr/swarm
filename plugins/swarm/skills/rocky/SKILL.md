@@ -158,12 +158,30 @@ Read `~/.claude/local-plugins/plugins/swarm/agents.yaml`. Verify that at least o
 
 > **Reached only if Phase 0.0 selected Tier 2 or 3.** Tiers 0/1 never run this — they have no `.swarm/` session, no ledger, no PRE_SWARM_SHA.
 
+**Pre-flight: PWD must be a git repo.** Phase 4 review context requires a valid `PRE_SWARM_SHA..HEAD` diff baseline. If the current working directory is not inside a git repo, `git rev-parse HEAD` silently captures a parent repo's SHA (or fails), and the Phase 4 diff becomes meaningless or destructive. Refuse to init with a clear message rather than silently running against a wrong baseline.
+
 ```bash
+# Pre-flight repo check — refuse to init outside a git repo
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "ERROR: /swarm:rocky Phase 0.5 requires a git repo working directory." >&2
+  echo "       Current PWD ($(pwd)) is not inside a git repo." >&2
+  echo "       cd to the target repo before invoking /swarm:rocky, or use --repo <path> (future)." >&2
+  exit 1
+fi
+
 PRE_SWARM_SHA=$(git rev-parse HEAD)  # anchor for Phase 4 review diff
 SESSION_ID=$(swarm_new_session "$(pwd)")
 SESSION_DIR="$(pwd)/.swarm/${SESSION_ID}"
 swarm_init_ledger "${SESSION_DIR}" "${SESSION_ID}" "${MUX}"
 swarm_ensure_gitignore "$(pwd)"
+
+# Best-effort cache-sync validation — warn if source and cache diverge.
+# Non-blocking: prints warnings to stderr but does not stop init. Catches
+# the case where someone edited a rocky source file and forgot to sync
+# the plugin cache (see swarm_sync_plugin_cache in lib/swarm-transport.sh).
+if ! swarm_validate_cache_sync "swarm" >&2; then
+  echo "WARNING: /swarm:rocky source and plugin cache have diverged. Run swarm_sync_plugin_cache on the files above or re-run the cache sync before trusting runtime behavior." >&2
+fi
 ```
 
 Set CMUX sidebar (if available):

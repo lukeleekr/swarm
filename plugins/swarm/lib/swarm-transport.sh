@@ -224,9 +224,23 @@ swarm_wait_agent_ready() {
     # Agent ready detection — two signals:
     # (1) Whole-screen markers for TUI apps in steady state
     # (2) Last non-empty line looks like a CLI prompt
-    # Both gated to avoid pytest-output false positives like "25% left" in test output.
+    #
+    # Markers (any one matches = ready):
+    # - `·[[:space:]]+[0-9]+%[[:space:]]+l` — Codex status bar "· 100% left".
+    #   Matches `l` rather than literal "left" because Codex truncates the
+    #   status line to "100% le…" in narrow panes. The leading middle dot
+    #   prefix gates against pytest false positives like "25% left" (no dot).
+    # - `>_[[:space:]]+OpenAI Codex` — the Codex welcome banner identifier,
+    #   the most reliable early-ready signal, present from the moment the
+    #   Codex TUI renders its greeting box.
+    # - `gpt-5\.[0-9]+[[:space:]]+(high|medium|low)[[:space:]]+fast` — Codex
+    #   model-name banner. Uses `[[:space:]]+` (not literal single space)
+    #   because the welcome screen shows `model:   gpt-5.4 high   fast`
+    #   with multi-space column alignment, while the status bar shows
+    #   `gpt-5.4 high fast` single-spaced. Both forms now match.
+    # - `bypass permissions on` / `Context [░▒▓█]` — Claude CLI ready markers.
     if echo "${screen}" | grep -qE \
-        '·[[:space:]]+[0-9]+%[[:space:]]+left|bypass permissions on|Context [░▒▓█]'; then
+        '·[[:space:]]+[0-9]+%[[:space:]]+l|>_[[:space:]]+OpenAI Codex|gpt-5\.[0-9]+[[:space:]]+(high|medium|low)[[:space:]]+fast|bypass permissions on|Context [░▒▓█]'; then
       return 0
     fi
     local last_line
@@ -513,6 +527,111 @@ swarm_ensure_gitignore() {
   if ! grep -q '.swarm/' "${project_dir}/.gitignore" 2>/dev/null; then
     echo '.swarm/' >> "${project_dir}/.gitignore"
   fi
+}
+
+# ── Plugin Cache Sync ────────────────────────────────────────────
+#
+# Rocky source files live under ~/.claude/local-plugins/plugins/<name>/...
+# but Claude Code reads from ~/.claude/plugins/cache/local-plugins/<name>/<version>/...
+# at runtime. Every source edit must be mirrored into the cache or the runtime
+# continues executing stale code. Manual `cp` is error-prone — a typo or a
+# forgotten sync has been observed to silently defeat real bug fixes (see
+# project_swarm_rocky_internal_bugs.md in user memory). These helpers
+# automate and validate the mirror.
+
+# Compute cache path for a given plugin source file.
+# Echoes the cache path on stdout, returns 0 on success, 1 on unrecognized input.
+swarm_plugin_cache_path() {
+  local src_file="$1"
+  local src_prefix="${HOME}/.claude/local-plugins/plugins/"
+  if [[ "${src_file}" != "${src_prefix}"* ]]; then
+    return 1
+  fi
+  local rel="${src_file#${src_prefix}}"
+  local plugin_name="${rel%%/*}"
+  local rel_within="${rel#${plugin_name}/}"
+  # Read version from plugin.json if present; fall back to highest numeric
+  # directory under the cache root.
+  local plugin_version=""
+  local manifest="${src_prefix}${plugin_name}/.claude-plugin/plugin.json"
+  if [[ -f "${manifest}" ]]; then
+    plugin_version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "${manifest}" 2>/dev/null \
+      | head -1 \
+      | sed 's/.*"\([^"]*\)"$/\1/')
+  fi
+  if [[ -z "${plugin_version}" ]]; then
+    local cache_root="${HOME}/.claude/plugins/cache/local-plugins/${plugin_name}"
+    plugin_version=$(ls -1 "${cache_root}" 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -1)
+  fi
+  if [[ -z "${plugin_version}" ]]; then
+    return 1
+  fi
+  printf '%s\n' "${HOME}/.claude/plugins/cache/local-plugins/${plugin_name}/${plugin_version}/${rel_within}"
+  return 0
+}
+
+# Sync a single plugin source file to its cache counterpart.
+# Creates parent dirs if needed. Verifies byte-identical with cmp after copy.
+# Returns 0 on success, 1 on any failure.
+swarm_sync_plugin_cache() {
+  local src_file="$1"
+  if [[ ! -f "${src_file}" ]]; then
+    echo "swarm_sync_plugin_cache: source not found: ${src_file}" >&2
+    return 1
+  fi
+  local dst_file
+  dst_file=$(swarm_plugin_cache_path "${src_file}")
+  if [[ -z "${dst_file}" ]]; then
+    echo "swarm_sync_plugin_cache: cannot compute cache path for ${src_file}" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "${dst_file}")" 2>/dev/null || {
+    echo "swarm_sync_plugin_cache: mkdir failed for $(dirname "${dst_file}")" >&2
+    return 1
+  }
+  cp "${src_file}" "${dst_file}" || {
+    echo "swarm_sync_plugin_cache: cp failed ${src_file} -> ${dst_file}" >&2
+    return 1
+  }
+  if ! cmp -s "${src_file}" "${dst_file}"; then
+    echo "swarm_sync_plugin_cache: post-sync cmp mismatch ${src_file} vs ${dst_file}" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Check whether all tracked plugin source files match their cache counterparts.
+# Scans lib/*.sh, SKILL.md, and references/*.md under the given plugin.
+# Prints a `divergent: <relpath>` line for each mismatch; prints nothing on
+# full parity. Returns 0 if in sync, 1 if any divergence, 2 on config error.
+# Intended for Phase 0 init as a best-effort warning — does not error out
+# the init, only surfaces staleness.
+swarm_validate_cache_sync() {
+  local plugin_name="${1:-swarm}"
+  local src_root="${HOME}/.claude/local-plugins/plugins/${plugin_name}"
+  [[ -d "${src_root}" ]] || { echo "swarm_validate_cache_sync: no source for ${plugin_name}" >&2; return 2; }
+  local divergent=0
+  local src_file rel_path cache_file
+  # Walk key files only — lib + skills (SKILL.md and references).
+  # Avoid traversing .git, evals, or other non-runtime dirs.
+  for src_file in \
+      "${src_root}/lib"/*.sh \
+      "${src_root}/skills"/*/SKILL.md \
+      "${src_root}/skills"/*/references/*.md; do
+    [[ -f "${src_file}" ]] || continue
+    cache_file=$(swarm_plugin_cache_path "${src_file}") || continue
+    if [[ ! -f "${cache_file}" ]]; then
+      rel_path="${src_file#${src_root}/}"
+      printf 'divergent: %s (missing in cache)\n' "${rel_path}"
+      divergent=$((divergent + 1))
+    elif ! cmp -s "${src_file}" "${cache_file}"; then
+      rel_path="${src_file#${src_root}/}"
+      printf 'divergent: %s\n' "${rel_path}"
+      divergent=$((divergent + 1))
+    fi
+  done
+  [[ ${divergent} -eq 0 ]] && return 0
+  return 1
 }
 
 # ── Wave Grouping ────────────────────────────────────────────────
