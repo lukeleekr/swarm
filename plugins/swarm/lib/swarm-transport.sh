@@ -677,7 +677,12 @@ ROOTS = [os.path.join(HOME, '.claude', 'memory'), os.path.join(HOME, '.claude', 
 WEAK_NOTICE = 'swarm_memory_preflight: Pass 1 weak (hits={0}, top_score={1}) — Pass 2 MemPalace semantic fallback disabled in v1, see project_mempalace.md'
 
 def tokenize(text):
-    return {t for t in re.split(r'[^a-z0-9]+', (text or '').lower()) if len(t) >= 3 and t not in STOPWORDS}
+    # Unicode-aware split so CJK (Korean/Chinese/Japanese) content tokenizes.
+    # For ASCII latin tokens keep the ≥3 char floor (filters stopword-sized noise);
+    # for non-ASCII tokens keep ≥2 because CJK words are 2+ syllables (e.g., 요약, 정책).
+    return {t for t in re.split(r'[\W_]+', (text or '').lower(), flags=re.UNICODE)
+            if t and t not in STOPWORDS
+            and (len(t) >= 3 or any(ord(c) > 127 for c in t) and len(t) >= 2)}
 
 def clean_yaml(value):
     value = value.strip()
