@@ -341,14 +341,20 @@ swarm_write_task() {
 
 swarm_check_result() {
   local task_file="$1"
-  local result_file="${task_file%.md}.result"
+  # Accept both .md task files (strip .md, append .result) and .result review
+  # files (used directly). Without this guard, a review path like
+  # .../reviews/review-final.result is rewritten to review-final.result.result
+  # and the check silently never fires. See fix(swarm) 2026-04-09.
+  local result_file="${task_file}"
+  [[ "${task_file}" == *.result ]] || result_file="${task_file%.md}.result"
   # Only accept results that contain the completion marker
   [[ -f "${result_file}" ]] && [[ -s "${result_file}" ]] && grep -q '^Status:' "${result_file}"
 }
 
 swarm_read_result() {
   local task_file="$1"
-  local result_file="${task_file%.md}.result"
+  local result_file="${task_file}"
+  [[ "${task_file}" == *.result ]] || result_file="${task_file%.md}.result"
   if [[ -f "${result_file}" ]]; then
     cat "${result_file}"
   else
@@ -359,7 +365,8 @@ swarm_read_result() {
 swarm_clear_result() {
   # Remove stale .result before retrying a task
   local task_file="$1"
-  local result_file="${task_file%.md}.result"
+  local result_file="${task_file}"
+  [[ "${task_file}" == *.result ]] || result_file="${task_file%.md}.result"
   rm -f "${result_file}"
 }
 
