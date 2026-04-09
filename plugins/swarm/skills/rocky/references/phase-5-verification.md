@@ -16,161 +16,233 @@ git status --short > "${SESSION_DIR}/verify-git-status.txt"
 
 Read all `.result` files. Check: are all tasks DONE? Does the output cover the original plan/spec?
 
-## 5.1.5 Execute reviewer verify_cmds
+## 5.1.5 Execute reviewer verifications
 
-Read `${SESSION_DIR}/reviews/review-final.result` (Phase 4 output). For each issue with `requires_verification: true` (see `phase-4-review.md` Section 4.0 schema), extract the `verify_cmd` and execute it under a strict safe-mode wrapper from the repo root.
+Read `${SESSION_DIR}/reviews/review-final.result` (Phase 4 output). For each issue with `requires_verification: true` (see `phase-4-review.md` Section 4.0 schema), extract `verification.runner` and `verification.target`, validate them against a hardcoded runner-template map plus the documented target rules, then execute the rendered argv via `subprocess.run(argv, shell=False)` from the current working directory. Rocky invokes Phase 5 from the repo root, so `cwd=os.getcwd()` is the repo root at runtime.
 
-**Safety rationale:** Reviewer output is machine-generated. A hallucinated or prompt-injected reviewer could emit destructive shell. Phase 5 enforces a three-layer gate before executing any command: (1) first-token allowlist, (2) subcommand constraint for tools that have one, (3) metacharacter + runner-specific flag denylist. The allowlist/denylists MUST stay in sync with `phase-4-review.md` Section 4.0's documented safety constraints.
+This replaces the old Option F wrapper from `6ad3b9d` and closes the round-3 escape vectors by construction. The reviewer no longer supplies a shell command or arbitrary flags; Phase 5 chooses the executable and fixed subcommands from a closed enum, then appends at most one validated target token.
 
-**KNOWN LIMITATION — NOT A SECURITY BOUNDARY.** These filters reduce the surface of reviewer-supplied code execution but do NOT hermetically prevent it. Test runners have extension mechanisms (plugin configs, `conftest.py`, import side-effects from test selectors, runner-specific passthrough options) that this filter does not and cannot catch via a static allowlist. This is a pragmatic close, accepted because rocky is local-only and the bounded threat model is LLM hallucination or prompt-injection through reviewed code on the user's own machine — NOT network-accessible untrusted input. The clean architectural fix is to replace freeform `verify_cmd` strings with structured verification data that Phase 5 renders from a hardcoded template; deferred to a future rocky session. Do NOT rely on this wrapper as a security boundary.
+**Safety model:**
+1. `runner` must match a key in `VERIFICATION_RUNNERS` exactly. Unknown or missing runners are rejected and counted as `verifications_missing`.
+2. `target` validation is runner-aware. Empty is valid. Non-empty targets must have no leading dash, no leading slash, no whitespace, no shell metacharacters or null byte, no `..` path component, and length `<= 512`. `go-test` additionally requires a non-empty target to start with `./`.
+3. The final argv is constructed as `VERIFICATION_RUNNERS[runner] + ([target] if target else [])`. No string concatenation and no shell command rendering.
+4. Execution is `subprocess.run(argv, shell=False, cwd=os.getcwd(), ...)` with the ambient environment inherited. Rocky runs this phase from the repo root, so the current working directory is the repo root in practice. Do not pass `env=`.
+
+**Residual limitation (narrow, explicit):** This is the narrower post-Option-F model documented in `phase-4-review.md` Section 4.0. It closes the flag-injection category by construction, but it does not make test code itself untrusted. Reviewers can still choose which in-repo tests, packages, or node IDs to run, and those targets execute under the project's normal trust boundary. The architectural history is documented in the rocky project memory.
 
 ```bash
 VERIFY_LOG="${SESSION_DIR}/verify-cmd-results.txt"
 : > "${VERIFY_LOG}"
 
-N_RUN=0
-N_FAILED=0
-N_MISSING=0
+read -r N_RUN N_FAILED N_MISSING < <(
+python3 - "${SESSION_DIR}/reviews/review-final.result" "${VERIFY_LOG}" << 'PYEOF'
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
 
-# Safe-mode checker: returns 0 if cmd is safe to execute, 1 otherwise.
-# Writes a short rejection reason to stdout on failure.
-# Keep in sync with phase-4-review.md Section 4.0 safety constraints.
-#
-# Rationale: first-token allowlisting alone is insufficient because interpreters
-# like `python -c "..."` can execute arbitrary reviewer-supplied code, AND
-# runner-specific flags like `pytest -p` or `go test -exec` load arbitrary
-# wrappers even inside allowlisted entrypoints. This checker enforces four
-# layers: (1) metacharacter denylist, (2) standalone vs subcommand-
-# constrained allowlist, (3) explicit general-interpreter rejection, (4)
-# runner-specific flag denylist for known escape hatches. This is a
-# reduced-surface pragmatic gate, NOT a sound execution boundary. See the
-# "KNOWN LIMITATION" banner above and feedback_verify_cmd_execution_safety.md
-# in the user's memory for the architectural context.
-swarm_verify_cmd_safe() {
-  local cmd="$1"
-  [[ -z "${cmd}" ]] && { echo "empty"; return 1; }
-
-  # Layer 1: metacharacter denylist — no shell composition allowed
-  case "${cmd}" in
-    *';'*|*'&&'*|*'||'*|*'|'*|*'>'*|*'<'*|*'`'*|*'$('*|*'$(('*|*$'\n'*)
-      echo "metachar-rejected"; return 1 ;;
-  esac
-
-  # Tokenize first two tokens (used by both flag denylist and allowlist below)
-  local first="${cmd%% *}"
-  local rest="${cmd#* }"
-  local second=""
-  [[ "${rest}" != "${cmd}" ]] && second="${rest%% *}"
-
-  # Layer 4: runner-context-aware flag denylist.
-  # Uses per-token inspection to catch BOTH space-delimited (`-r value`) and
-  # attached-value (`-rvalue`) forms of dangerous flags. Context-aware so
-  # legitimate flags in one runner are not false-positived against another
-  # (e.g. pytest's `-r chars` for summary reporting is safe; rspec's `-r X`
-  # requires a Ruby file and is dangerous). Safe because the metacharacter
-  # denylist above already rejects newlines/pipes/etc., so word-splitting
-  # the cmd into tokens is well-defined.
-  local _tok
-  for _tok in ${cmd}; do
-    # pytest plugin/module loading — applies only when runner is pytest
-    if [[ "${first}" == "pytest" ]]; then
-      case "${_tok}" in
-        -p|--plugin|--pyargs|--plugin=*|--pyargs=*|-p[!-]*)
-          echo "flag-rejected:pytest-plugin:${_tok}"; return 1 ;;
-      esac
-    fi
-    # rspec require flags — applies to standalone rspec and bundle exec rspec
-    if [[ "${first}" == "rspec" || ( "${first}" == "bundle" && "${second}" == "exec" ) ]]; then
-      case "${_tok}" in
-        -r|--require|--require=*|-r[!-]*)
-          echo "flag-rejected:ruby-require:${_tok}"; return 1 ;;
-      esac
-    fi
-    # go test wrapper flags — applies only to "go test"
-    if [[ "${first}" == "go" && "${second}" == "test" ]]; then
-      case "${_tok}" in
-        -exec|-exec=*|-toolexec|-toolexec=*)
-          echo "flag-rejected:go-wrapper:${_tok}"; return 1 ;;
-      esac
-    fi
-  done
-
-  # Standalone allowed test runners — any args permitted (already passed denylist)
-  case "${first}" in
-    pytest|rspec|./scripts/test|./scripts/verify) return 0 ;;
-  esac
-
-  # Subcommand-constrained tools — require specific second token
-  case "${first} ${second}" in
-    "go test"|"cargo test"|"npm test"|"yarn test"|"pnpm test") return 0 ;;
-    "bundle exec")
-      # bundle exec requires a specific third token (rspec only for now)
-      local rest2="${rest#* }"
-      local third=""
-      [[ "${rest2}" != "${rest}" ]] && third="${rest2%% *}"
-      if [[ "${third}" == "rspec" ]]; then
-        return 0
-      fi
-      echo "bundle-exec-subcommand:${third:-<missing>}"; return 1 ;;
-  esac
-
-  # Explicit rejection list for clarity in logs
-  case "${first}" in
-    python|python3|make|sh|bash|zsh|perl|ruby|node)
-      echo "general-interpreter-rejected:${first}"; return 1 ;;
-  esac
-
-  echo "not-allowlisted:${first}${second:+ }${second}"
-  return 1
+VERIFICATION_RUNNERS = {
+    'pytest': ['pytest'],
+    'rspec': ['rspec'],
+    'go-test': ['go', 'test'],
+    'cargo-test': ['cargo', 'test'],
+    'npm-test': ['npm', 'test'],
+    'yarn-test': ['yarn', 'test'],
+    'pnpm-test': ['pnpm', 'test'],
+    'bundle-exec-rspec': ['bundle', 'exec', 'rspec'],
+    'script-test': ['./scripts/test'],
+    'script-verify': ['./scripts/verify'],
 }
 
-# Extract verify_cmd lines from the review output. Matches `verify_cmd: "..."`
-# scoped to issues with `requires_verification: true` (same yaml block).
-# Uses awk to pair the two fields within each ```yaml ... ``` block.
-while IFS= read -r cmd; do
-  if [[ -z "${cmd}" ]]; then
-    N_MISSING=$((N_MISSING + 1))
-    echo "=== MISSING verify_cmd ===" >> "${VERIFY_LOG}"
-    continue
-  fi
-  # Safe-mode gate — reject commands that fail allowlist or metacharacter checks
-  reject_reason=$(swarm_verify_cmd_safe "${cmd}")
-  if [[ $? -ne 0 ]]; then
-    N_MISSING=$((N_MISSING + 1))
-    echo "=== REJECTED (${reject_reason}): ${cmd} ===" >> "${VERIFY_LOG}"
-    continue
-  fi
-  N_RUN=$((N_RUN + 1))
-  echo "=== ${cmd} ===" >> "${VERIFY_LOG}"
-  # Use `env -i` + minimal PATH to reduce environment-based attack surface.
-  # Still uses bash -c because test runners often rely on shell features,
-  # but the input has been gated by the allowlist + denylist above.
-  env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="${HOME}" bash -c "${cmd}" >> "${VERIFY_LOG}" 2>&1
-  rc=$?
-  echo "exit=${rc}" >> "${VERIFY_LOG}"
-  [[ ${rc} -ne 0 ]] && N_FAILED=$((N_FAILED + 1))
-done < <(awk '
-  /^```yaml/ { in_yaml=1; req=""; cmd=""; next }
-  /^```/ && in_yaml { in_yaml=0; if (req=="true") print cmd; next }
-  in_yaml && /^requires_verification:/ { req=$2 }
-  in_yaml && /^verify_cmd:/ {
-    sub(/^verify_cmd:[[:space:]]*"?/, "")
-    sub(/"?[[:space:]]*$/, "")
-    cmd=$0
-  }
-' "${SESSION_DIR}/reviews/review-final.result" 2>/dev/null || true)
+_FORBIDDEN = re.compile(r"[\s;&|<>`$()\\\x00]")
+_MAX_TARGET_LEN = 512
 
-swarm_update_ledger_field "${SESSION_DIR}" "verify_cmds_run" "${N_RUN}"
-swarm_update_ledger_field "${SESSION_DIR}" "verify_cmds_failed" "${N_FAILED}"
-swarm_update_ledger_field "${SESSION_DIR}" "verify_cmds_missing" "${N_MISSING}"
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def validate_target(target, runner):
+    if target == '':
+        return True, 'ok'
+    if len(target) > _MAX_TARGET_LEN:
+        return False, 'too-long'
+    if target.startswith('-'):
+        return False, 'leading-dash'
+    if target.startswith('/'):
+        return False, 'leading-slash'
+    if _FORBIDDEN.search(target):
+        return False, 'forbidden-char'
+    if any(part == '..' for part in target.split('/')):
+        return False, 'parent-component'
+    if runner == 'go-test' and not target.startswith('./'):
+        return False, 'go-test-target-must-start-dot-slash'
+    return True, 'ok'
+
+
+def parse_verifications(path):
+    review_path = Path(path)
+    if not review_path.exists():
+        return
+
+    in_yaml = False
+    in_verification = False
+    req = False
+    runner = None
+    target = None
+
+    with review_path.open('r', encoding='utf-8') as handle:
+        for raw_line in handle:
+            line = raw_line.rstrip('\n')
+
+            if line.startswith('```yaml'):
+                in_yaml = True
+                in_verification = False
+                req = False
+                runner = None
+                target = None
+                continue
+
+            if in_yaml and line.startswith('```'):
+                yield req, runner, target
+                in_yaml = False
+                in_verification = False
+                req = False
+                runner = None
+                target = None
+                continue
+
+            if not in_yaml:
+                continue
+
+            if line.startswith('requires_verification:'):
+                value = line.split(':', 1)[1].strip().lower()
+                req = value == 'true'
+                in_verification = False
+                continue
+
+            if line.startswith('verification:'):
+                in_verification = True
+                continue
+
+            if in_verification:
+                if line.startswith((' ', '\t')):
+                    stripped = line.lstrip(' \t')
+                    if stripped.startswith('runner:'):
+                        runner = strip_quotes(stripped.split(':', 1)[1])
+                        continue
+                    if stripped.startswith('target:'):
+                        target = strip_quotes(stripped.split(':', 1)[1])
+                        continue
+                elif line:
+                    in_verification = False
+
+
+def log_line(handle, text=''):
+    handle.write(text + '\n')
+
+
+def main(review_path_arg, log_path_arg):
+    review_path = review_path_arg
+    log_path = Path(log_path_arg)
+    log_path.write_text('', encoding='utf-8')
+
+    n_run = 0
+    n_failed = 0
+    n_missing = 0
+
+    with log_path.open('a', encoding='utf-8') as log_handle:
+        for req, runner, target in parse_verifications(review_path):
+            if not req:
+                continue
+            if not runner or runner not in VERIFICATION_RUNNERS:
+                n_missing += 1
+                log_line(log_handle, f'=== REJECTED runner-invalid runner={runner!r} ===')
+                continue
+            if target is None:
+                target = ''
+            valid, reason = validate_target(target, runner)
+            if not valid:
+                n_missing += 1
+                log_line(log_handle, f'=== REJECTED target-invalid reason={reason} runner={runner} target={target!r} ===')
+                continue
+
+            argv = list(VERIFICATION_RUNNERS[runner])
+            if target:
+                argv.append(target)
+
+            n_run += 1
+            log_line(log_handle, f'=== RUN runner={runner} target={target!r} ===')
+            log_line(log_handle, f'argv={argv!r}')
+            try:
+                completed = subprocess.run(
+                    argv,
+                    cwd=os.getcwd(),
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                    shell=False,
+                )
+                exit_code = completed.returncode
+                stdout = completed.stdout
+                stderr = completed.stderr
+            except FileNotFoundError as exc:
+                # Runner binary not on PATH: verification could not be attempted,
+                # so reclassify from failed to missing. The n_run increment at
+                # line 178 is left in place (counts as "attempted") because the
+                # state-classification logic at Section 5.3 routes on
+                # verifications_missing > 0 regardless of n_run.
+                exit_code = 127
+                stdout = ''
+                stderr = str(exc)
+                n_missing += 1
+            except subprocess.TimeoutExpired as exc:
+                exit_code = -1
+                stdout = exc.stdout or ''
+                stderr = exc.stderr or ''
+                if str(exc):
+                    stderr = f'{stderr}\n{exc}'.strip()
+                n_failed += 1
+            except Exception as exc:
+                exit_code = -1
+                stdout = ''
+                stderr = str(exc)
+                n_failed += 1
+            else:
+                if exit_code != 0:
+                    n_failed += 1
+
+            log_line(log_handle, 'stdout:')
+            log_line(log_handle, stdout)
+            log_line(log_handle, 'stderr:')
+            log_line(log_handle, stderr)
+            log_line(log_handle, f'exit={exit_code}')
+            log_line(log_handle)
+
+    return n_run, n_failed, n_missing
+
+
+if len(sys.argv) >= 3:
+    n_run, n_failed, n_missing = main(sys.argv[1], sys.argv[2])
+    print(f'{n_run} {n_failed} {n_missing}')
+PYEOF
+)
+
+swarm_update_ledger_field "${SESSION_DIR}" "verifications_run" "${N_RUN}"
+swarm_update_ledger_field "${SESSION_DIR}" "verifications_failed" "${N_FAILED}"
+swarm_update_ledger_field "${SESSION_DIR}" "verifications_missing" "${N_MISSING}"
 ```
 
-**Rejection handling:** Commands rejected by safe-mode (empty, metacharacter-rejected, or not-allowlisted) are counted as `verify_cmds_missing` — treated identically to a reviewer who forgot to provide `verify_cmd`. They feed `human_needed` at 5.3, where the user sees the rejected command and decides whether to authorize it manually or rewrite the issue.
+**Rejection handling:** Missing or invalid `verification` data is counted as `verifications_missing`. That includes unknown runners, omitted runner blocks, and invalid targets. Empty target is valid and means whole-suite or runner-default behavior. `verifications_missing` feeds `human_needed` at 5.3, where the user sees the rejection reason and decides whether to correct the review output or inspect manually.
 
 **Feeds into 5.3 classification:**
-- All verify_cmds exit 0 AND none missing → no additional gap evidence from this step.
-- Any `verify_cmds_failed > 0` → contributes to `gaps_found`. The failing `verify_cmd` outputs in `verify-cmd-results.txt` become gap evidence for 5.4.
-- Any `verify_cmds_missing > 0` → contributes to `human_needed` (reviewer tagged an issue as requiring verification but did not provide an actionable check; the human must inspect).
+- All verifications exit 0 AND none missing → no additional gap evidence from this step.
+- Any `verifications_failed > 0` → contributes to `gaps_found`. The failing verification outputs in `verify-cmd-results.txt` become gap evidence for 5.4.
+- Any `verifications_missing > 0` → contributes to `human_needed` (reviewer tagged an issue as requiring verification but did not provide actionable structured verification data; the human must inspect).
 
 If Phase 4 produced no review output file (missing `reviews/review-final.result`) → skip 5.1.5 silently and proceed to 5.2. Missing review is its own failure mode handled elsewhere.
 
@@ -192,9 +264,9 @@ If `PYTEST_EXIT != 0` (tests failed):
 
 | State | Condition | Action |
 |---|---|---|
-| `passed` | All deterministic tests green + all tasks DONE + plan fully covered + all verify_cmds exit 0 + no missing verify_cmds | Auto-proceed to Phase 6 |
-| `gaps_found` | Deterministic test failures OR any task FAILED OR plan coverage incomplete OR any `verify_cmds_failed > 0` | Gap closure cycle (5.4) |
-| `human_needed` | All automated checks pass but items need manual verification, OR infrastructure/flaky failures detected, OR any `verify_cmds_missing > 0` (reviewer required verification but provided no verify_cmd) | Present targeted checklist to user, continue on approval |
+| `passed` | All deterministic tests green + all tasks DONE + plan fully covered + all verifications exit 0 + no missing verifications | Auto-proceed to Phase 6 |
+| `gaps_found` | Deterministic test failures OR any task FAILED OR plan coverage incomplete OR any `verifications_failed > 0` | Gap closure cycle (5.4) |
+| `human_needed` | All automated checks pass but items need manual verification, OR infrastructure/flaky failures detected, OR any `verifications_missing > 0` (reviewer required verification but provided no actionable `verification` block) | Present targeted checklist to user, continue on approval |
 
 ```bash
 swarm_update_ledger_field "${SESSION_DIR}" "verification_state" "${STATE}"

@@ -6,7 +6,7 @@
 
 | Coder Agent | Reviewer | How |
 |-------------|----------|-----|
-| Claude (any model) | Codex | `codex review` or `codex exec` with review prompt |
+| Claude (any model) | Codex | Spawn Codex pane, then prompt `superpowers:requesting-code-review` per 4.3a |
 | Codex | Claude Opus (orchestrator) | Invoke `Skill("superpowers:requesting-code-review")` → spawns `superpowers:code-reviewer` subagent |
 
 After all tasks complete:
@@ -29,7 +29,9 @@ APPROVED | NEEDS_REVISION
 severity: P0              # P0 | P1 | P2 | P3
 route: coder              # coder | orchestrator | user
 requires_verification: true
-verify_cmd: "pytest tests/auth/test_csrf.py::test_token_rotation -x"
+verification:
+  runner: pytest
+  target: "tests/auth/test_csrf.py::test_token_rotation"
 file: src/auth/csrf.py
 line: 42
 ```
@@ -53,17 +55,44 @@ line: 42
   - `coder`: dispatch back to the implementer agent via Phase 4.4 fix loop.
   - `orchestrator`: Opus addresses directly in-process (design-level decisions, not implementation).
   - `user`: escalate to human (scope, policy, or trade-off decisions the orchestrator cannot make unilaterally).
-- **`requires_verification`** — boolean. When `true`, the reviewer MUST provide `verify_cmd`. Phase 5 executes it; non-zero exit = gap.
-- **`verify_cmd`** — a single shell command string, runnable from the repo root, that exits 0 iff the issue is resolved. Required iff `requires_verification: true`. Omit for advisory findings or when no automated check exists (in which case `requires_verification: false`).
-  - **Safety constraints (enforced at execution in Phase 5.1.5):** the reviewer is machine-generated; verify_cmd is NOT treated as trusted input.
-    - **Standalone-allowed test runners** (first token exact match, arguments unrestricted within metacharacter + flag denylists): `pytest`, `rspec`, `./scripts/test`, `./scripts/verify`.
-    - **Subcommand-constrained tools** (first token + required subcommand): `go test ...`, `cargo test ...`, `npm test ...`, `yarn test ...`, `pnpm test ...`, `bundle exec rspec ...`. Any other subcommand is rejected (e.g., `go run`, `cargo run`, `npm run <x>`, `bundle exec <x>` are all rejected).
-    - **Explicitly disallowed first-token**: `python`/`python3`/`make`/`sh`/`bash`/`zsh`/`perl`/`ruby`/`node`. These can execute arbitrary reviewer-supplied code through interpreter flags (`python -c "..."`) or project-defined targets. If you need to run a Python test, use `pytest`. If you need a project-specific verification, use `./scripts/test` or `./scripts/verify` — those are project-owned and the user controls their contents.
-    - **Metacharacter denylist**: MUST NOT contain `;`, `&&`, `||`, `|`, `>`, `<`, `` ` ``, `$(`, `$((`, or newlines. Write a single test-runner invocation — multi-step verification means multiple issues with separate `verify_cmd` entries.
-    - **Runner-specific flag denylist** (reject these anywhere in the command): `-p`/`--plugin`/`--pyargs` (pytest plugin loading), `-r`/`--require` (rspec/bundle exec rspec Ruby `require`), `-exec`/`-toolexec` (go test wrapper invocation). These are runner-specific escape hatches that load or execute arbitrary code even when the command prefix is allowlisted.
-    - **No interactive commands** (no REPL, no editor, no prompt-driven tools).
-    - Commands that fail any of these checks are rejected at execution time and counted as `verify_cmds_missing` (treated as if the reviewer provided no verify_cmd at all). The user sees the rejection reason in `${SESSION_DIR}/verify-cmd-results.txt`.
-  - **Known limitation — not a security boundary.** The safety constraints above reduce the surface of reviewer-supplied code execution but do NOT hermetically prevent it. Test runners have additional runner-specific extension mechanisms (plugin configs, `conftest.py` in unexpected dirs, test selectors that trigger import side-effects, etc.) that the filter does not catch. This is a pragmatic close, not a sound execution boundary. The clean architectural fix is to replace freeform `verify_cmd` strings with structured verification data (`{runner, target, flags}` that Phase 5 renders from a hardcoded template, removing the reviewer's ability to inject flags at all). Deferred to a future rocky session. Rocky is local-only, so the bounded threat model — LLM hallucination or prompt-injection through reviewed code on your own machine — is the operating assumption. Do NOT advertise rocky's verify_cmd execution as a security-critical boundary.
+- **`requires_verification`** — boolean. When `true`, the reviewer MUST provide a `verification` block. The `verification` block is required iff `requires_verification: true`.
+- **`verification`** — structured verification data. Phase 5 renders the final argv from a hardcoded runner template instead of executing a reviewer-authored command string.
+  - **`runner`** — enum. Allowed identifiers and renderings are:
+    - `pytest` -> `pytest [target]`
+    - `rspec` -> `rspec [target]`
+    - `go-test` -> `go test [target]`
+    - `cargo-test` -> `cargo test [target]`
+    - `npm-test` -> `npm test [target]`
+    - `yarn-test` -> `yarn test [target]`
+    - `pnpm-test` -> `pnpm test [target]`
+    - `bundle-exec-rspec` -> `bundle exec rspec [target]`
+    - `script-test` -> `./scripts/test [target]`
+    - `script-verify` -> `./scripts/verify [target]`
+    - Unknown runner values are rejected at execution time and counted as `verifications_missing`.
+  - **`target`** — optional string. Empty or omitted is valid and means run the whole suite or the runner's default behavior.
+  - **`target` constraints**:
+    - MUST NOT start with `-`
+    - MUST NOT start with `/`
+    - MUST NOT contain whitespace
+    - MUST NOT contain any of `;`, `&`, `|`, `<`, `>`, `` ` ``, `$`, `(`, `)`, `\`, newline, or null byte
+    - MUST NOT contain `..` as a path component after splitting on `/`
+    - length MUST be `<= 512`
+    - for `go-test`, a non-empty target MUST start with `./`
+  - **Valid examples**:
+    - `tests/auth/test_csrf.py::test_token_rotation`
+    - `./pkg/foo`
+    - `./...`
+    - `spec/models/user_spec.rb`
+    - `""` (empty)
+  - **Rejected examples**:
+    - `-p mypkg`
+    - `/tmp/evil_test.py`
+    - `../outside/tests`
+    - `github.com/attacker/evil` for runner `go-test`
+    - `tests/auth test_csrf.py`
+- **Why structured data instead of a command string?** Review output is machine-generated. A freeform shell command lets the reviewer choose flags and shell syntax that Phase 5 would have to sanitize after the fact. A `{runner, target}` schema closes the flag-injection category by construction because Phase 5 builds argv from a fixed template and passes it to `subprocess.run(argv, shell=False, ...)`.
+- **Residual limitation (narrow, explicit):** Unlike Option F, this design does not execute a reviewer-authored command string at all. Phase 5 now treats the runner template as trusted and the selected in-repo test/package/nodeID target as project-trusted. A reviewer can still choose which in-repo tests, packages, or node IDs to run. That is an intentional project-trust boundary. Flag injection is now closed by construction.
+- **Strict YAML formatting requirement:** inside the fenced `yaml` block, `requires_verification:` and `verification:` MUST start at column 0. `runner:` and `target:` MUST be indented by at least one space or tab beneath `verification:`. Top-level indentation and placement matter because Phase 5.1.5 uses a hand-rolled scanner, not a YAML parser, to read these fields. Mis-indented `verification:` top-level keys are silently skipped. `runner:` or `target:` written at column 0 are treated as top-level keys and dropped from the verification block. Inline comments are not parsed for `requires_verification:`, `runner:`, or `target:`. Use plain scalar values only, with optional surrounding quotes for `target:`; do not append `# ...` comments on those lines.
 - **`file` / `line`** — optional but strongly preferred when the issue is localized.
 
 ## 4.1 Determine reviewer (with pre-flight validation)
@@ -94,7 +123,7 @@ Spawn a Codex pane and invoke the **Superpowers `requesting-code-review` skill**
 ```bash
 PANE=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
 swarm_wait_agent_ready "${PANE}" 30
-swarm_pipe_prompt "${PANE}" "Use superpowers:requesting-code-review to review the code changes between ${BASE_SHA}..${HEAD_SHA}. Focus on: correctness, edge cases, security, test coverage, cross-component consistency. Write findings to ${SESSION_DIR}/reviews/review-final.result following the Section 4.0 Review output schema in this document: per-issue yaml block with severity (P0-P3), route (coder/orchestrator/user), requires_verification (bool), verify_cmd (required when requires_verification is true), plus file/line when localized."
+swarm_pipe_prompt "${PANE}" "Use superpowers:requesting-code-review to review the code changes between ${BASE_SHA}..${HEAD_SHA}. Focus on: correctness, edge cases, security, test coverage, cross-component consistency. Write findings to ${SESSION_DIR}/reviews/review-final.result following the Section 4.0 Review output schema in this document: per-issue yaml block with severity (P0-P3), route (coder/orchestrator/user), requires_verification (bool), verification: {runner, target} (required when requires_verification is true), plus file/line when localized."
 swarm_poll_result "${SESSION_DIR}/reviews/review-final.result" 600
 swarm_kill_agent "${PANE}"
 ```
@@ -132,7 +161,7 @@ Invoke `Skill("superpowers:requesting-code-review")` with:
 - `{HEAD_SHA}`: current HEAD
 - `{DESCRIPTION}`: swarm session summary
 
-The skill spawns a `superpowers:code-reviewer` subagent that reviews the diff and returns structured feedback using the Section 4.0 schema (Status, Strengths, per-issue yaml with severity/route/requires_verification/verify_cmd, Assessment).
+The skill spawns a `superpowers:code-reviewer` subagent that reviews the diff and returns structured feedback using the Section 4.0 schema (Status, Strengths, per-issue yaml with severity/route/requires_verification/verification, Assessment).
 
 **Why two stages:** Spec compliance is fast and binary (did they build what was asked?). Code quality is deeper (is it well-built?). Running quality review on non-compliant code wastes effort.
 
