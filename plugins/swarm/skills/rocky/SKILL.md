@@ -17,6 +17,7 @@ argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents [N]] [-
 <!-- Phase Flow (V2 complete):
   Phase 0.0: SMART ROUTER — picks Tier 0/1 (skip swarm) or Tier 2/3 (continue)
   Phase 0: Init (mux detect, interrupted/stale detection, --resume, registry, session)
+  Phase 0.6: MEMORY RETRIEVAL PREFLIGHT (Pass 1 lexical, Pass 2 MemPalace stub)
   Phase 1: Context detection + complexity classification
   Phase 1.5: PRE-EXECUTION DISCUSS (grey area batch table, --skip-discuss to bypass)
   Phase 2: Plan decomposition + WAVE GROUPING (dependency graph, cycle detection)
@@ -190,6 +191,25 @@ swarm_set_status "Swarm Leader"
 swarm_set_progress "Init" "0.05"
 ```
 
+## Phase 0.6: Memory Retrieval Preflight
+
+> **Reached only if Phase 0.0 selected Tier 2 or 3.** Tiers 0/1 never run this because they do not initialize `SESSION_DIR`, do not route through Phase 1, and do not write swarm task specs.
+
+Run memory retrieval before plan/context routing so the orchestrator can reuse prior notes, bug writeups, and project memory when available. This complements MemPalace; it does not replace it and it does not introduce any third memory store beyond Luke's existing markdown memory corpora and schema (`name:`, `description:`, `type:`).
+
+Two-pass design:
+- **Pass 1 lexical scan:** read only top-level `.md` files in `~/.claude/memory` and `~/.claude/projects/-Users-lukelee/memory`, excluding basenames `log.md`, `lint_report.md`, and `MEMORY.md`. Use the filename surface plus top-of-file frontmatter `name:` and `description:` when present.
+- **Pass 2 MemPalace semantic fallback:** STUB ONLY in v1. It exists to complement future MemPalace retrieval when Pass 1 is weak, but `project_mempalace.md` documents the current multi-writer HNSW bug, so no live semantic retrieval runs here yet.
+
+```bash
+swarm_memory_preflight "${SESSION_DIR}" "${ARGUMENTS}"
+swarm_set_progress "Memory Preflight" "0.07"
+```
+
+If `swarm_memory_preflight` exits non-zero, stop and surface the error before continuing; later phases consume `${SESSION_DIR}/memory-hits.md`, and this flow must not proceed without a successful preflight artifact.
+
+This writes `${SESSION_DIR}/memory-hits.md`. Phase 1 routing and Phase 2 plan decomposition consume it, and plan authors SHOULD read it before writing task specs because it can surface prior decisions, lessons, and convictions that should shape task boundaries and acceptance criteria.
+
 ## Phase 1: Context Detection & Complexity Classification
 
 ### 1.1 Check for Existing Superpowers Artifacts
@@ -262,6 +282,7 @@ If no grey areas found → skip silently, proceed to Phase 2.
 ## Phase 2: Plan Decomposition
 
 Read the implementation plan and decompose into task files.
+Before decomposing, read `${SESSION_DIR}/memory-hits.md` because it surfaces prior decisions / lessons / convictions that should inform task boundaries and acceptance criteria.
 
 For each logical work unit in the plan:
 

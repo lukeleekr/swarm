@@ -641,6 +641,148 @@ swarm_validate_cache_sync() {
   return 1
 }
 
+swarm_memory_preflight() {
+  local session_dir="$1"
+  local task_text="$2"
+  local output_path="${3:-${session_dir}/memory-hits.md}"
+
+  if [[ -z "${session_dir//[[:space:]]/}" ]]; then
+    echo "swarm_memory_preflight: session_dir is required" >&2
+    return 2
+  fi
+  if [[ -z "${task_text//[[:space:]]/}" ]]; then
+    echo "swarm_memory_preflight: task_text must not be empty" >&2
+    return 2
+  fi
+  if [[ ! -d "${session_dir}" ]]; then
+    echo "swarm_memory_preflight: session_dir not found: ${session_dir}" >&2
+    return 2
+  fi
+
+  python3 - "${session_dir}" "${task_text}" "${output_path}" <<'PYEOF'
+import os, re, sys
+from datetime import datetime, timezone
+
+# Concise English function-word stoplist only; keep this generic so lexical matching still surfaces domain terms from filenames and Luke memory metadata.
+STOPWORDS = {
+    'a', 'about', 'after', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'before',
+    'being', 'but', 'by', 'did', 'do', 'does', 'for', 'from', 'had', 'has', 'have',
+    'if', 'in', 'is', 'it', 'its', 'no', 'not', 'of', 'on', 'or', 'so', 'that',
+    'the', 'these', 'this', 'those', 'to', 'up', 'was', 'were', 'with', 'without',
+    'yes', 'down',
+}
+EXCLUDE = {'log.md', 'lint_report.md', 'MEMORY.md'}
+HOME = os.path.expanduser('~')
+ROOTS = [os.path.join(HOME, '.claude', 'memory'), os.path.join(HOME, '.claude', 'projects', '-Users-lukelee', 'memory')]
+WEAK_NOTICE = 'swarm_memory_preflight: Pass 1 weak (hits={0}, top_score={1}) — Pass 2 MemPalace semantic fallback disabled in v1, see project_mempalace.md'
+
+def tokenize(text):
+    return {t for t in re.split(r'[^a-z0-9]+', (text or '').lower()) if len(t) >= 3 and t not in STOPWORDS}
+
+def clean_yaml(value):
+    value = value.strip()
+    return value[1:-1] if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'") else value
+
+def parse_frontmatter(path):
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return '', ''
+    if not lines or lines[0].strip() != '---':
+        return '', ''
+    name = description = ''
+    for line in lines[1:]:
+        if line.strip() == '---':
+            return name, description
+        match = re.match(r'^(name|description)\s*:\s*(.*)\s*$', line)
+        if match:
+            key, value = match.group(1), clean_yaml(match.group(2))
+            if key == 'name':
+                name = value
+            elif key == 'description':
+                description = value
+    return '', ''
+
+def portable_path(path):
+    return path.replace(HOME, '~', 1) if path.startswith(HOME) else path
+
+def build_hit(basename, path, task_tokens):
+    name, description = parse_frontmatter(path)
+    name_tokens = tokenize(name)
+    desc_tokens = tokenize(description)
+    file_tokens = tokenize(os.path.splitext(basename)[0])
+    score = len(task_tokens & name_tokens) * 3 + len(task_tokens & desc_tokens) * 2 + len(task_tokens & file_tokens)
+    if score <= 0:
+        return None
+    return {
+        'basename': basename,
+        'path': portable_path(path),
+        'score': score,
+        'matched': sorted((task_tokens & name_tokens) | (task_tokens & desc_tokens) | (task_tokens & file_tokens)),
+        'name': name or '(no frontmatter)',
+        'description': description or '(no frontmatter)',
+    }
+
+_, task_text, output_path = sys.argv[1:4]
+task_summary = re.sub(r'\s+', ' ', task_text).strip()[:200]
+task_tokens, hits = tokenize(task_text), []
+for root in ROOTS:
+    if not os.path.isdir(root):
+        continue
+    for basename in sorted(os.listdir(root)):
+        if not basename.endswith('.md') or basename in EXCLUDE:
+            continue
+        path = os.path.join(root, basename)
+        if not os.path.isfile(path):
+            continue
+        hit = build_hit(basename, path, task_tokens)
+        if hit:
+            hits.append(hit)
+
+hits.sort(key=lambda item: (-item['score'], item['basename']))
+total_hits, top_hits = len(hits), hits[:10]
+top_score = hits[0]['score'] if hits else 0
+weak = total_hits == 0 or (total_hits < 3 and top_score < 5)
+lines = [
+    '# Memory Retrieval Preflight Results', '',
+    '- Task: {0}'.format(task_summary),
+    '- Run at: {0}'.format(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')),
+    '- Pass 1: {0} lexical hits (top 10 shown)'.format(total_hits),
+    '- Pass 2: skipped (MemPalace semantic fallback disabled in v1 — see project_mempalace.md multi-writer HNSW bug)',
+    '- Confidence: {0}'.format('weak' if weak else 'strong'),
+    '', '## Hits', '',
+]
+if top_hits:
+    for index, hit in enumerate(top_hits, 1):
+        lines.extend([
+            '### {0}. score={1}  {2}'.format(index, hit['score'], hit['path']),
+            '- **name**: {0}'.format(hit['name']),
+            '- **description**: {0}'.format(hit['description']),
+            '- **matched terms**: {0}'.format(', '.join(hit['matched'])),
+            '',
+        ])
+else:
+    lines.append('_No lexical matches found._')
+
+try:
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as handle:
+        handle.write('\n'.join(lines).rstrip() + '\n')
+except OSError as exc:
+    print('swarm_memory_preflight: {0}'.format(exc), file=sys.stderr)
+    sys.exit(1)
+
+# TODO: When Pass 2 is enabled, it should run a MemPalace semantic fallback over the same Luke memory corpora after a weak Pass 1 result; the trigger is `weak == True`.
+# Keep it stubbed here only: project_mempalace.md documents the current multi-writer HNSW issue, so no live MemPalace calls are allowed in v1.
+if weak:
+    print(WEAK_NOTICE.format(total_hits, top_score), file=sys.stderr)
+PYEOF
+  return $?
+}
+
 # ── Wave Grouping ────────────────────────────────────────────────
 
 swarm_group_waves() {
