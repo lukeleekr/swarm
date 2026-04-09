@@ -35,7 +35,8 @@ VERIFY_LOG="${SESSION_DIR}/verify-cmd-results.txt"
 : > "${VERIFY_LOG}"
 
 read -r N_RUN N_FAILED N_MISSING < <(
-python3 - "${SESSION_DIR}/reviews/review-final.result" "${VERIFY_LOG}" << 'PYEOF'
+# Source is the aggregated file written by phase-4-review.md Section 4.4, which always exists (zero-specialist case is a structural copy of review-final.result).
+python3 - "${SESSION_DIR}/reviews/review-aggregated.result" "${VERIFY_LOG}" << 'PYEOF'
 import os
 import re
 import subprocess

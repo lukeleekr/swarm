@@ -116,18 +116,83 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 Aggregate from all `.result` files: files changed, summaries, what was implemented.
 
+## 4.2.5 Diff-conditioned specialist router
+
+Specialists are additive to the core reviewer, reuse the Section 4.0 schema unchanged, and follow the same cross-model rule as the core review path. Each specialist writes `${SESSION_DIR}/reviews/review-specialist-<name>.result`. Triggers are computed once here and consumed by Section 4.3c.
+
+| Key | Domain | `segments` (lowercase, whole-path-segment match) | `suffixes` (lowercase) | `contains` (lowercase substring) |
+|---|---|---|---|---|
+| `security` | Auth, crypto, session, credentials | `auth`, `crypto`, `session`, `sessions`, `credential`, `credentials`, `password`, `passwords`, `token`, `tokens`, `cookie`, `cookies`, `oauth`, `jwt`, `csrf`, `xss`, `secret`, `secrets` | `.pem`, `.key` | (empty) |
+| `api-contract` | HTTP/RPC contract surface | `routes`, `controllers`, `openapi`, `swagger`, `schema`, `schemas`, `api`, `apis` | `.graphql`, `.proto` | (empty) |
+| `data-migrations` | DB schema changes | `migrations`, `alembic`, `flyway`, `migrate`, `sqitch` | (empty) | `db/schema`, `/schema.sql`, `/schema.rb`, `/schema.py` |
+| `performance` | Repo-specific hot paths | (empty) | (empty) | (empty) |
+
+```bash
+python3 - "${SESSION_DIR}" "${BASE_SHA}" "${HEAD_SHA}" << 'PYEOF'
+import glob, json, os, subprocess, sys
+
+if len(sys.argv) != 4:
+    raise SystemExit(0)
+session_dir, pre, head = sys.argv[1:4]
+reviews_dir = os.path.join(session_dir, 'reviews')
+specialists_json = os.path.join(reviews_dir, 'specialists.json')
+for stale_path in glob.glob(f'{reviews_dir}/review-specialist-*.result'):
+    try:
+        os.unlink(stale_path)
+    except FileNotFoundError:
+        pass
+try:
+    os.unlink(specialists_json)
+except FileNotFoundError:
+    pass
+changed_files = subprocess.run(
+    ['git', 'diff', '--name-only', f'{pre}..{head}'],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.splitlines()
+specialists = {
+    'security': {'segments': ['auth', 'crypto', 'session', 'sessions', 'credential', 'credentials', 'password', 'passwords', 'token', 'tokens', 'cookie', 'cookies', 'oauth', 'jwt', 'csrf', 'xss', 'secret', 'secrets'], 'suffixes': ['.pem', '.key'], 'contains': []},
+    'api-contract': {'segments': ['routes', 'controllers', 'openapi', 'swagger', 'schema', 'schemas', 'api', 'apis'], 'suffixes': ['.graphql', '.proto'], 'contains': []},
+    'data-migrations': {'segments': ['migrations', 'alembic', 'flyway', 'migrate', 'sqitch'], 'suffixes': [], 'contains': ['db/schema', '/schema.sql', '/schema.rb', '/schema.py']},
+    'performance': {'segments': [], 'suffixes': [], 'contains': []},
+}
+def matches(rule, changed_path):
+    norm = changed_path.lower()
+    parts = [part for part in norm.split('/') if part]
+    return any(part in rule['segments'] for part in parts) or any(norm.endswith(suffix) for suffix in rule['suffixes']) or any(token in norm for token in rule['contains'])
+matches_by_specialist = {}
+for key, rule in specialists.items():
+    triggered_files = [path for path in changed_files if matches(rule, path)]
+    if triggered_files:
+        matches_by_specialist[key] = triggered_files
+with open(specialists_json, 'w', encoding='utf-8') as handle:
+    json.dump(matches_by_specialist, handle, indent=2)
+    handle.write('\n')
+print(f'triggered specialists: {len(matches_by_specialist)}')
+print(f'triggered files: {sum(len(paths) for paths in matches_by_specialist.values())}')
+PYEOF
+```
+
+Adding a fifth specialist, or populating `performance` hot paths, means editing the Python `specialists` dict in this section directly. There is no config file, env var, or external registry for these rules.
+
+**Zero-trigger fast path:** `specialists.json` is always written by the router, even when it is `{}`. If it parses to an empty object, Section 4.3c spawns no specialist panes or Agents. Section 4.4 still runs when `review-final.result` exists and writes `review-aggregated.result` as a structural copy of the core review; because stale specialist artifacts are deleted at the top of this router, prior rounds cannot leak into that copy.
 ## 4.3a Codex reviews (when coder was Claude) — invokes Superpowers skill
 
 Spawn a Codex pane and invoke the **Superpowers `requesting-code-review` skill** from `~/.codex/superpowers/skills/requesting-code-review/`. This is symmetric to Phase 4.3b which invokes `Skill("superpowers:requesting-code-review")` on the Claude side. Same Superpowers skill, both sides.
 
 ```bash
-PANE=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
-swarm_wait_agent_ready "${PANE}" 30
-swarm_pipe_prompt "${PANE}" "Use superpowers:requesting-code-review to review the code changes between ${BASE_SHA}..${HEAD_SHA}. Focus on: correctness, edge cases, security, test coverage, cross-component consistency. Write findings to ${SESSION_DIR}/reviews/review-final.result following the Section 4.0 Review output schema in this document: per-issue yaml block with severity (P0-P3), route (coder/orchestrator/user), requires_verification (bool), verification: {runner, target} (required when requires_verification is true), plus file/line when localized."
-swarm_poll_result "${SESSION_DIR}/reviews/review-final.result" 600
-swarm_kill_agent "${PANE}"
+# CORE_PANE is named distinctly so the 4.3c.1 specialist loop cannot shadow it; `[ ! -s ... ]` short-circuits when specialists.json is absent so python3 does not crash on FileNotFoundError.
+CORE_PANE=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+swarm_wait_agent_ready "${CORE_PANE}" 30
+swarm_pipe_prompt "${CORE_PANE}" "Use superpowers:requesting-code-review to review the code changes between ${BASE_SHA}..${HEAD_SHA}. Focus on: correctness, edge cases, security, test coverage, cross-component consistency. Write findings to ${SESSION_DIR}/reviews/review-final.result following the Section 4.0 Review output schema in this document: per-issue yaml block with severity (P0-P3), route (coder/orchestrator/user), requires_verification (bool), verification: {runner, target} (required when requires_verification is true), plus file/line when localized."
+if [ ! -s "${SESSION_DIR}/reviews/specialists.json" ] || python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if not data else 1)' "${SESSION_DIR}/reviews/specialists.json"; then
+  swarm_poll_result "${SESSION_DIR}/reviews/review-final.result" 600
+  swarm_kill_agent "${CORE_PANE}"
+fi
 ```
 
+On this path, the core 4.3a pane and any triggered 4.3c.1 specialist panes are spawned together immediately after Section 4.2 context prep. When `specialists.json` is non-empty, 4.3c.1 owns the shared wait/cleanup path.
 Codex auto-activates the skill when its name appears in the prompt — Codex's runtime detects `superpowers:requesting-code-review` and loads `~/.codex/superpowers/skills/requesting-code-review/SKILL.md`.
 
 **Do NOT** use `codex exec` with a hand-crafted review prompt. **Do NOT** use the local `/code-review` skill or `codex review` subcommand — those are different from the Superpowers `requesting-code-review` skill (verified by spawning a Codex pane and checking the filesystem).
@@ -150,7 +215,7 @@ Agent(
 )
 ```
 
-If spec review finds issues → route back to coder for fixes (Phase 4.4). Do NOT proceed to Stage 2.
+If spec review finds issues → route back to coder for fixes (Phase 4.4). Do NOT proceed to Stage 2 or Section 4.3c.2 specialist dispatch.
 
 **Stage 2 — Code quality** (only if Stage 1 passes):
 
@@ -165,9 +230,144 @@ The skill spawns a `superpowers:code-reviewer` subagent that reviews the diff an
 
 **Why two stages:** Spec compliance is fast and binary (did they build what was asked?). Code quality is deeper (is it well-built?). Running quality review on non-compliant code wastes effort.
 
+If Stage 1 passes, Stage 2 and any triggered Section 4.3c.2 specialist Agents are dispatched in the same pass.
+
+## 4.3c Dispatch specialists in parallel
+
+Specialists follow the same opposite-model rule as the core reviewer. Claude coder means Codex specialist panes alongside Section 4.3a; Codex coder means Claude `Agent(...)` specialists alongside Section 4.3b Stage 2.
+
+### 4.3c.1 Codex specialists (for 4.3a path, Claude coder)
+
+Load `specialists.json` via Python, not a flat text file. If it is `{}`, do not dispatch or poll specialists; wait for the core 4.3a review to finish, then continue to Section 4.4. When it is non-empty, spawn one Codex pane per key, wait for readiness in parallel, then prompt each pane with only its triggered files.
+
+```bash
+SPECIALIST_KEYS=()
+while IFS= read -r key; do
+  [ -n "${key}" ] && SPECIALIST_KEYS+=("${key}")
+done < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); [print(key) for key in data]' "${SESSION_DIR}/reviews/specialists.json")
+if [ ${#SPECIALIST_KEYS[@]} -eq 0 ]; then
+  echo "No specialist triggers; skip 4.3c.1"
+else
+  SPECIALIST_PANES=()
+  EXPECTED_RESULTS=("${SESSION_DIR}/reviews/review-final.result")
+  for key in "${SPECIALIST_KEYS[@]}"; do
+    PANE=$(swarm_spawn_agent "Codex-Specialist-${key}" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+    SPECIALIST_PANES+=("${PANE}")
+    EXPECTED_RESULTS+=("${SESSION_DIR}/reviews/review-specialist-${key}.result")
+    swarm_wait_agent_ready "${PANE}" 30 &
+  done
+  wait
+  for i in "${!SPECIALIST_KEYS[@]}"; do
+    key="${SPECIALIST_KEYS[$i]}"
+    RESULT_PATH="${SESSION_DIR}/reviews/review-specialist-${key}.result"
+    DOMAIN=$(python3 -c 'import sys; domains = {"security": "security - authentication, authorization, cryptography, session management, credentials, injection, secret leakage, CSRF/XSS", "api-contract": "api-contract - HTTP, RPC, schema, and contract-surface compatibility", "data-migrations": "data-migrations - schema changes, migrations, rollback safety, ordering, compatibility", "performance": "performance - repo-specific hot paths and latency-sensitive code paths"}; print(domains[sys.argv[1]])' "${key}")
+    TRIGGERED_FILES=$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print("\n".join(data[sys.argv[2]]))' "${SESSION_DIR}/reviews/specialists.json" "${key}")
+    SPECIALIST_PROMPT=$(cat <<EOF
+Domain review only: ${DOMAIN}
+Session dir: ${SESSION_DIR}
+Write result to: ${RESULT_PATH}
+Triggered files:
+${TRIGGERED_FILES}
+
+Read only those files plus anything they import. Leave generic correctness, style, and broad architecture to the core reviewer. Write your findings using the Section 4.0 schema exactly, starting with:
+## Status
+APPROVED | NEEDS_REVISION
+
+If you find no domain issues, still write an APPROVED result file and set:
+## Assessment
+No domain issues found in triggered files.
+EOF
+)
+    swarm_pipe_prompt "${SPECIALIST_PANES[$i]}" "${SPECIALIST_PROMPT}"
+  done
+  python3 - "${EXPECTED_RESULTS[@]}" << 'PYEOF'
+import os
+import sys
+import time
+
+paths = sys.argv[1:]
+deadline = time.monotonic() + 600
+# Shared deadline: total wait is <= 600s regardless of specialist count.
+while time.monotonic() < deadline:
+    if all(os.path.exists(path) and os.path.getsize(path) > 0 for path in paths):
+        raise SystemExit(0)
+    time.sleep(2)
+raise TimeoutError('Timed out waiting for core/specialist review results')
+PYEOF
+  for pane in "${SPECIALIST_PANES[@]}"; do swarm_kill_agent "${pane}"; done
+  swarm_kill_agent "${CORE_PANE}"
+fi
+```
+
+On the specialist path, start 4.3c.1 immediately after the 4.3a pane is spawned and prompted, before its standalone poll/kill step. The core reviewer pane and all specialist panes then share the same 600-second wall-clock deadline from the polling heredoc above.
+
+### 4.3c.2 Claude specialists (for 4.3b path, Codex coder)
+
+Stage 1 still runs first. If Stage 1 fails, exit to the Section 4.4 fix loop immediately: no specialist dispatch, no Stage 2, and no aggregation run on that iteration. If Stage 1 passes, Opus loads `specialists.json` via the same inline Python pattern as 4.3c.1 (`json.load` for keys plus per-key file lists), then dispatches one `Agent(subagent_type="superpowers:code-reviewer", name="specialist-<key>", prompt="<SPECIALIST_PROMPT>")` per key in the JSON plus the Stage 2 `Skill("superpowers:requesting-code-review")` call in the same message so they run in parallel. When `specialists.json` is `{}`, Stage 2 runs alone. Each specialist prompt includes `${SESSION_DIR}/reviews/review-specialist-<key>.result` and that key's newline-separated `{TRIGGERED_FILES}` list from the JSON. No extra polling is needed on the Claude side because `Agent(...)` calls return when complete.
+### 4.3c.3 Specialist prompt template
+
+Use one template per specialist with `{DOMAIN}`, `{TRIGGERED_FILES}`, `{RESULT_PATH}`, and `{SESSION_DIR}` filled in at dispatch time.
+
+```text
+Domain review only: {DOMAIN}
+Session dir: {SESSION_DIR}
+Write result to: {RESULT_PATH}
+Triggered files:
+{TRIGGERED_FILES}
+
+Read only those files plus anything they import. Leave generic correctness, style, and broad architecture to the core reviewer. Write your findings to {RESULT_PATH} using the Section 4.0 schema exactly, starting with `## Status`, then `## Strengths`, `## Issues`, and `## Assessment`, with per-issue yaml containing `severity`, `route`, `requires_verification`, and `verification` when required. If you find no domain issues, still write an APPROVED result file and set Assessment to: `No domain issues found in triggered files.`
+```
+
+After Section 4.2, dispatch the core reviewer and specialists together whenever the path allows it. Section 4.3c waits only for specialist artifacts that were actually expected, and Section 4.4 does not proceed until every expected review result file is present.
+
 ## 4.4 Fix loop
 
 Act on reviewer feedback per the per-issue `severity` and `route` fields (Section 4.0 schema).
+
+```bash
+python3 - "${SESSION_DIR}" << 'PYEOF'
+import glob, os, sys
+
+if len(sys.argv) != 2:
+    raise SystemExit(0)
+reviews_dir = os.path.join(sys.argv[1], 'reviews')
+core_path = os.path.join(reviews_dir, 'review-final.result')
+out_path = os.path.join(reviews_dir, 'review-aggregated.result')
+if not os.path.exists(core_path) or os.path.getsize(core_path) == 0:
+    print('aggregation skipped: review-final.result absent (Stage 1 failure path or no core review run)')
+    raise SystemExit(0)
+specialist_paths = sorted(glob.glob(os.path.join(reviews_dir, 'review-specialist-*.result')))
+if not specialist_paths:
+    with open(core_path, encoding='utf-8') as src, open(out_path, 'w', encoding='utf-8') as dst:
+        dst.write(src.read())
+    raise SystemExit(0)
+def parse(path):
+    data = {'Status': 'APPROVED', 'Strengths': [], 'Issues': [], 'Assessment': []}; section = None; issue = []
+    for line in open(path, encoding='utf-8').read().splitlines():
+        if line in {'## Status', '## Strengths', '## Issues', '## Assessment'}:
+            if issue: data['Issues'].append('\n'.join(issue).strip()); issue = []
+            section = line[3:]; continue
+        if section == 'Status' and line.strip(): data['Status'] = line.strip().upper()
+        elif section == 'Strengths' and line.strip(): data['Strengths'].append(line)
+        elif section == 'Issues':
+            if line.startswith('### Issue ') and issue: data['Issues'].append('\n'.join(issue).strip()); issue = [line]
+            elif line.strip() or issue: issue.append(line)
+        elif section == 'Assessment' and line.strip(): data['Assessment'].append(line.strip())
+    if issue: data['Issues'].append('\n'.join(issue).strip())
+    return data
+sources = [('core', core_path)] + [(f"specialist-{os.path.basename(path)[18:-7]}", path) for path in specialist_paths]
+parsed = [(name, parse(path)) for name, path in sources]
+status = 'NEEDS_REVISION' if any(item['Status'] == 'NEEDS_REVISION' for _, item in parsed) else 'APPROVED'
+strengths = [f"- [{name}] {line[2:] if line.startswith('- ') else line}" for name, item in parsed for line in item['Strengths']]
+issues = [issue for _, item in parsed for issue in item['Issues']]
+assessment = [f"[{name}] {line}" for name, item in parsed for line in item['Assessment']]
+with open(out_path, 'w', encoding='utf-8') as handle:
+    handle.write(f"## Status\n{status}\n\n## Strengths\n{chr(10).join(strengths) if strengths else '- None noted.'}\n\n## Issues\n")
+    handle.write(f"{chr(10).join([''] + issues + ['']) if issues else chr(10)}## Assessment\n{chr(10).join(assessment) if assessment else 'No additional assessment.'}\n")
+PYEOF
+```
+
+Aggregation runs iff `review-final.result` exists and is non-empty. When zero specialists were triggered, `review-aggregated.result` is a structural copy of `review-final.result`; when Stage 1 failed and Stage 2 never ran, aggregation is skipped and the previous aggregated artifact is left untouched until a later clean review pass overwrites it.
 
 **Precedence rule (read this first):** `severity` determines whether the issue *blocks* Phase 5. `route` determines *who* handles it. Severity and route are orthogonal — every combination has a defined outcome. Blocking does not require dispatch to a coder; an orchestrator or user handler can satisfy the block.
 
