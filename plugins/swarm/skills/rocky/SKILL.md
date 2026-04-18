@@ -1,6 +1,6 @@
 ---
 name: rocky
-description: "Manager-orchestrated multi-agent swarm with smart routing. Use whenever the user wants to spawn multiple coding agents in parallel, coordinate Codex and Claude on the same project, get cross-model code review (Claude codes → Codex reviews, or vice versa), implement multiple features simultaneously in parallel waves, watch agents work visually in tmux panes, run a Tier 2 SDD pipeline (single coder with plan + code review gates), or orchestrate any task too large for a single agent. Trigger phrases include: 'swarm', 'multi-agent', 'parallel coders', 'codex agents', 'spawn N agents', 'have N agents work on', 'watch the agents', 'cross-model review', 'rocky', 'orchestrate this', 'team of coders', 'work in parallel', 'use a swarm', 'use a team', 'wave dispatch', 'codex SDD', 'native agent team'. The skill includes a Phase 0.0 smart router that automatically picks the lightest mechanism (Opus inline / single subagent / single SDD pane / parallel multi-coder waves) — so it is safe to invoke whenever orchestration MIGHT be useful, even if the task seems small. The router downgrades automatically rather than over-engineering, so under-triggering is the bigger risk. Make sure to use this skill for any complex multi-step coding work, anytime the user mentions agents/coders/orchestration/swarms/teams, or anytime cross-model review would add value (which is most non-trivial features)."
+description: "Manager-orchestrated multi-agent swarm with Tier 0-3 smart routing. Auto-downgrades from parallel wave dispatch to Opus inline, so invoke whenever orchestration MIGHT help. Triggers: swarm, multi-agent, parallel, codex agents, spawn agents, cross-model review, rocky, orchestrate, team, wave dispatch, codex SDD."
 argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents [N]] [--dry-run] [--sequential] [--resume] [--skip-discuss]"
 ---
 
@@ -8,354 +8,245 @@ argument-hint: "<task> [--keep-panes] [--agents <name>] [--review-agents [N]] [-
 
 > **allowed-tools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Agent`, `TaskCreate`, `TaskUpdate`, `TaskList`, `Skill`, `AskUserQuestion`, `TeamCreate`, `TeamDelete`, `SendMessage`
 
-> **HARD RULE — NO MCP TOOLS FOR AGENT DISPATCH**: NEVER use `mcp__codex__codex` or any MCP server tool to dispatch work to agents. ALL agent interaction MUST go through the transport lib: `swarm_spawn_agent` (spawn in pane), `swarm_pipe_prompt` (send work), `swarm_poll_result` (get results). Using MCP tools bypasses the visual pane orchestration and is a protocol violation.
+> **HARD RULE — NO MCP FOR DISPATCH**: ALL agent interaction via transport lib (`swarm_spawn_agent`, `swarm_pipe_prompt`, `swarm_poll_result`). NEVER `mcp__codex__codex`. Bypassing pane orchestration is a protocol violation. **For reviewers**: use `swarm_spawn_reviewer` (single, blocking) or `swarm_get_agent_field` + manual dispatch (parallel). Never hardcode `"codex"` as a spawn command — always look up `command_interactive` from `agents.yaml`.
 
-> **HARD RULE — CROSS-MODEL REVIEW**: The reviewer MUST be a different model family than the author. Claude plans → **Codex reviews** the plan (`--review-agents`). Claude codes → **Codex reviews** the code. Codex codes → **Claude Opus reviews** the code. Same-model review is not independent review. Exception: trivial/simple tasks (Tier 0/1 in Phase 0.0) where the orchestrator handles both inline without a formal review phase.
+> **HARD RULE — CROSS-MODEL REVIEW**: Reviewer MUST differ from author's model family. Claude→Codex reviews. Codex→Claude reviews. Exception: Tier 0/1 (trivial). Plan reviewer: always Codex pane. Code reviewer: opposite-model (Codex coder→Claude 4.3b, Claude coder→Codex 4.3a).
 
-> **HARD RULE — ORCHESTRATOR PUSHBACK (MAX 3 ROUNDS)**: Opus is the final arbiter at every gate. If not fully assured of plan quality, code correctness, or review thoroughness, Opus pushes back to the producer with a SPECIFIC concern (file:line, missing acceptance criterion, contradictory reasoning). The producer addresses the concern. Opus re-evaluates. Up to **3 rounds per gate** before escalating to the user. Applies to plan review (Phase 2.5), implementation (Phase 3.3 REVISE flow), and code review (Phase 4.4 fix loop). Pushback rounds are not optional fallback — they are the orchestrator's primary quality mechanism.
+> **HARD RULE — PUSHBACK (MAX 3 ROUNDS)**: Opus pushes back with SPECIFIC concerns (file:line, missing AC, contradictory reasoning). 3 rounds per gate max, then escalate to user. Applies at Phase 2.5, 3.3 REVISE, 4.4 fix loop. This is the primary quality mechanism.
 
-<!-- Phase Flow (V2 complete):
-  Phase 0.0: SMART ROUTER — picks Tier 0/1 (skip swarm) or Tier 2/3 (continue)
-  Phase 0: Init (mux detect, interrupted/stale detection, --resume, registry, session)
-  Phase 0.6: MEMORY RETRIEVAL PREFLIGHT (Pass 1 lexical, Pass 2 MemPalace stub)
-  Phase 1: Context detection + complexity classification
-  Phase 1.5: PRE-EXECUTION DISCUSS (grey area batch table, --skip-discuss to bypass)
-  Phase 2: Plan decomposition + WAVE GROUPING (dependency graph, cycle detection)
-  Phase 3: Wave dispatch (parallel within wave, sequential across waves)
-           └─ Between waves: REGRESSION CHECK (JUnit XML identity comparison)
-  Phase 4: Review (holistic + optional Codex audit)
-  Phase 5: VERIFICATION ROUTING (flaky pre-filter → passed/gaps_found/human_needed)
-           └─ Gap closure: snapshot → fix tasks → regression check → re-verify (max 1 round)
-  Phase 6: Done (report, cleanup, next steps)
+## Transport Library API
+
+**Use `swarm_spawn_reviewer` (high-level) for review/consultation tasks — NOT `swarm_spawn_agent` (low-level).**
+
+| Function | Use when | Handles |
+|----------|----------|---------|
+| `swarm_spawn_reviewer` | Review, consultation, any blocking pane task | Lookup + spawn + wait + prompt + poll + cleanup |
+| `swarm_spawn_agent` | Building block for custom dispatch | Raw tmux split-window only (manual command lookup required) |
+
+```bash
+# CORRECT: Use high-level wrapper
+swarm_spawn_reviewer "codex" "${SESSION_DIR}" "${TASK_FILE}" \
+  "@${TASK_FILE}" 180 "right" "" "${TASK_FILE%.md}.result"
+
+# WRONG: Low-level requires manual lookup + proper args
+CMD=$(swarm_get_agent_field "codex" "command_interactive")
+swarm_spawn_agent "codex" "$CMD" "$WORKDIR" "$SESSION_DIR"
+```
+
+Failure mode: calling `swarm_spawn_agent` without proper args → broken `/logs/` path, silent failure.
+
+<!-- Phase Flow:
+  0.0: SMART ROUTER → Tier 0/1 (skip) or 2/3 (continue)
+  0: Init (mux, interrupted/stale, registry, session)
+  0.6: Memory retrieval preflight
+  1: Context detection + routing
+  1.5: Grey area batch table
+  2: Plan decomposition + wave grouping
+  2.5: Plan review gate
+  3: Wave dispatch + regression checks
+  4: Cross-model code review + fix loop
+  5: Verification routing (flaky pre-filter → passed/gaps_found/human_needed)
+  6: Report, cleanup, next steps
 -->
 
 ## Purpose
 
-Execute tasks using a manager-orchestrated swarm of agents. Claude acts as the manager, dispatching work to Codex CLI (and future agents) via file-based messaging. Integrates with superpowers specs/plans when available.
+Manager-orchestrated swarm: Claude dispatches work to Codex CLI (and future agents) via file-based messaging. Integrates with superpowers specs/plans.
+
+## Decomposition Doctrine
+
+> Multi-agent systems fail less from weak models than from badly specified task boundaries.
+
+Orchestrator's primary value = **decomposition quality**, not routing sophistication. Each task is an **API contract**, not a vague work request. **Litmus test:** Could a competent new hire complete this with only this prompt, repo access, and no follow-up chat?
+
+**Well-decomposed = self-contained + verifiable + cheap to retry.** Don't split below the semantic unit — too-tiny tasks create coordination overhead. Right size: independent enough to parallelize, coherent enough to not need reintegration glue. See Quality Gate (Phase 2) for operational checklist.
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS`:
-- `--keep-panes` → don't kill agent panes after completion
-- `--agents <names>` → comma-separated agent names from registry (default: auto from role_priority)
-- `--dry-run` → show plan + team composition without executing
-- `--sequential` → force strict task-by-task ordering (disable wave parallelism)
-- `--resume` → resume interrupted session instead of starting fresh
-- `--skip-discuss` → skip Phase 1.5 grey area extraction and Phase 2.5 plan review
-- `--review-agents` or `--review-agents N` → N plan reviewer panes (1 per model family, extras get adversarial role)
-- Everything else → task description
+`--keep-panes` keep panes | `--agents <names>` coder identity | `--dry-run` plan only | `--sequential` disable parallelism | `--resume` resume interrupted session | `--skip-discuss` skip 1.5+2.5 | `--review-agents [N]` plan reviewer panes (1/model family, extras get adversarial role) | everything else → task description
 
-## Phase 0.0: Smart Router (RUNS FIRST — before sourcing the transport library)
+## Phase 0.0: Smart Router (BEFORE transport library)
 
-> **/swarm:rocky is a smart router. It absorbs Native AgentTeam, Superpowers SDD,
-> and full swarm orchestration behind one entry point. It must never be worse
-> than picking the right tool by hand. Phase 0.0 picks the lightest mechanism
-> that satisfies the cross-model rule and the user's intent.**
-
-Walk this rubric BEFORE sourcing the transport library or initializing any
-session state. Phase 0.0 may decide that swarm machinery is unnecessary —
-in which case Phases 0.1–6 are skipped entirely.
+Walk top-down, pick FIRST tier that fits, BEFORE sourcing the transport library or initializing any session state. Skips Phases 0.1–6 for Tier 0/1.
 
 ### Tier table
 
-| Tier | Mechanism | Plan author | Plan reviewer | Coder | Code reviewer |
-|---|---|---|---|---|---|
-| **0** | Opus inline (no dispatch) | — | — | Opus | — |
-| **1** | Plain `Agent()` in-process (Claude subagent) | — | — | Claude subagent | — |
-| **2** | SDD (sequential, with internal review gates) | Opus | **Codex pane** | **Codex** (default) or Claude (`--agents claude`) | Opposite-model |
-| **3** | Parallel multi-coder | Opus | **Codex pane** | **Codex** panes (default) or Claude teammates (`--agents claude`) | Opposite-model |
+| Tier | Mechanism | Plan reviewer | Coder | Code reviewer |
+|---|---|---|---|---|
+| **0** | Opus inline | — | Opus | — |
+| **1** | `Agent()` in-process | — | Claude subagent | — |
+| **2** | SDD (sequential + review gates) | Codex pane | Codex (default) or Claude (`--agents claude`) | Opposite-model |
+| **3** | Parallel multi-coder | Codex pane | Codex panes (default) or Claude teammates (`--agents claude`) | Opposite-model |
 
-### Tier signals — walk top-down, pick FIRST tier that fits, STOP
+### Tier signals
 
-**Tier 0 — Opus inline:** ≤20 LOC, 1 file, mechanical, Opus already has the file in context (or it's <200 lines to read), no design judgment required.
-→ Action: Opus does the work directly. Do NOT source the transport library. Do NOT create a `.swarm/` session. Cross-model rule does not apply (existing exception for trivial work).
+**Tier 0:** ≤20 LOC, 1 file, mechanical, Opus has file in context (or <200 lines to read), no design judgment. → Opus directly. No `.swarm/`, no cross-model.
 
-**Tier 1 — Plain `Agent()` in-process:** 1–3 files, mechanical, no formal acceptance criteria, one-shot dispatch is sufficient.
-→ Action: Dispatch via plain `Agent(subagent_type=<focused>, prompt=...)` with **no `team_name`**. Pick the focused subagent type (test-specialist, Explore, Plan, backend-specialist, frontend-specialist, database-specialist, security-specialist, or general-purpose). Single in-process call, no tmux pane, no fresh Claude process. Cross-model rule does not apply (existing exception for mechanical work).
+**Tier 1:** 1–3 files, mechanical, no ACs, one-shot. → `Agent(subagent_type=<focused>, prompt=...)` no `team_name`. Types: test-specialist, Explore, Plan, backend/frontend/database/security-specialist, general-purpose. No cross-model.
 
-**Tier 2 — SDD (sequential with quality gates):** Substantive feature/fix with acceptance criteria, ordered dependencies, quality matters more than throughput.
-→ Action: Continue to Phase 0.1 (init). Inside Phase 3, take the **single-coder path (Phase 3.5)**. Plan reviewer (Codex pane) and code reviewer (cross-model) are mandatory. Pushback hard rule applies.
+**Tier 2:** Substantive feature/fix with ACs, ordered dependencies. → Phase 0.1+, single-coder path (Phase 3.5). Reviews mandatory.
 
-**Tier 3 — Parallel multi-coder:** 3+ tasks that are TRULY independent (disjoint files/modules), throughput from parallelism wins more than serialization safety, OR user explicitly wants visible multi-pane orchestration, OR cross-model orchestration is the point.
-→ Action: Continue to Phase 0.1 (init). Inside Phase 3, take the **wave dispatch path (Phase 3.3)**. Coder identity from Decision A; transport from Decision B. Plan reviewer + code reviewer mandatory. Pushback hard rule applies.
+**Tier 3:** 3+ truly independent tasks (disjoint files), OR user wants multi-pane. → Phase 0.1+, wave dispatch (Phase 3.3). Reviews mandatory.
 
-### Decision A — Coder identity (Tier 2/3 only)
+### Dispatch mechanism (Tier 2/3)
 
-```
---agents claude  → Claude
---agents codex   → Codex
-default          → Codex
-```
+Coder: `--agents claude` → Claude; default → Codex.
 
-### Decision B — Sub-mode dispatch (Tier 2/3, after Decision A)
-
-| Tier | Coder | Mechanism |
+| Tier | Codex (default) | Claude (`--agents claude`) |
 |---|---|---|
-| 2 | Codex (default) | 1 Codex pane via `swarm_spawn_agent`. Prompt uses `superpowers:subagent-driven-development` to invoke the Superpowers SDD skill from `~/.codex/superpowers/skills/subagent-driven-development/`. Codex runs the SDD loop internally. |
-| 2 | Claude (`--agents claude`) | Opus invokes `Skill("superpowers:subagent-driven-development")` directly in its own session. No pane. Same Superpowers skill, Claude side. |
-| 3 | Codex (default) | Multiple Codex panes via `swarm_spawn_agent` in wave layout (existing Phase 3.3 wave dispatch). Bash transport. |
-| 3 | Claude (`--agents claude`) | `TeamCreate` + multiple `Agent(subagent_type=..., team_name=..., name=..., prompt=...)` calls — **Native AgentTeam**. Each teammate is a Claude in a tmux pane. NOT bash-spawned `claude --dangerously-skip-permissions`. See `references/phase-3-dispatch.md`. |
-
-### Cross-model rule recap (Tier 2 and 3)
-
-- **Plan reviewer**: Codex pane, always. Phase 2.5.2 spawns it.
-- **Code reviewer**: opposite-model.
-  - Codex coder → Claude reviews via `Skill("superpowers:requesting-code-review")` in Opus's session — Phase 4.3b.
-  - Claude coder → Codex reviews via Codex pane prompt using `superpowers:requesting-code-review` — Phase 4.3a.
+| 2 | 1 pane via `swarm_spawn_agent`, runs `superpowers:subagent-driven-development` internally | Opus invokes `Skill("superpowers:subagent-driven-development")` in-process |
+| 3 | Multiple panes via `swarm_spawn_agent` (wave dispatch) | `TeamCreate` + `Agent(team_name=..., name=...)` — Native AgentTeam. See `references/phase-3-dispatch.md` |
 
 ### Tie-breakers
 
-- Two tiers fit → pick the LOWER one (lightest path that fits).
-- User says "use a team" / "spawn agents" / "I want to watch it" → bump to Tier 3.
-- Task is ambiguous → Tier 1 with `Plan` or `Explore` first to scope, then re-tier.
-- `--agents` flag overrides default coder identity but not the tier (tier is still picked by signals).
+Two tiers fit → LOWER. User says "team"/"agents"/"watch" → Tier 3. Ambiguous → Tier 1 + Explore, re-tier. `--agents` overrides coder identity, not tier.
 
-### Phase 0.0 announcement
+### Announcement
 
-State to the user (one line) before continuing:
-> "Tier {N}, {coder} {mechanism}. {Plan reviewer + code reviewer if Tier 2+}."
-
-Examples:
-- "Tier 0, Opus inline. No dispatch."
-- "Tier 1, Claude subagent (general-purpose). No review needed."
-- "Tier 2, Codex SDD (single pane), Codex plan reviewer, Claude code reviewer."
-- "Tier 3, Claude Parallel via Native AgentTeam (4 teammates), Codex plan reviewer, Codex code reviewer."
-
-Then proceed to Phase 0.1 (Tier 2/3) or stop (Tier 0/1).
+One line: `"Tier {N}, {mechanism}. {reviewers if Tier 2+}."`
+E.g.: "Tier 2, Codex SDD (single pane), Codex plan reviewer, Claude code reviewer."
 
 ## Phase 0: Prerequisites & Init
 
 ### 0.1 Source Transport Library
-
 ```bash
 source ~/.claude/local-plugins/plugins/swarm/lib/swarm-transport.sh
 ```
 
 ### 0.2 Detect Multiplexer
-
 ```bash
-MUX=$(swarm_detect_mux)
+MUX=$(swarm_detect_mux)  # cmux → full panes+sidebar | tmux → panes | none → background
 ```
 
-Report to user: `cmux` → "Running in CMUX — full visual panes + sidebar status"; `tmux` → "Running in tmux — visual panes enabled"; `none` → "No multiplexer detected — agents will run as background processes".
-
-### 0.3 Check for Interrupted / Stale Sessions
-
+### 0.3 Interrupted / Stale Sessions
 ```bash
 INTERRUPTED=$(swarm_find_interrupted_sessions "$(pwd)")
 STALE=$(swarm_find_stale_sessions "$(pwd)")
 ```
-
-- **`--resume` AND interrupted session found:** read its ledger + completed task results, present "Found interrupted session [ID]. N of M tasks complete. Resume from wave W?". On approval: reuse `SESSION_DIR`, record `swarm_update_ledger_field "${SESSION_DIR}" "resumed_from" "${INTERRUPTED_SESSION_ID}"`, skip to Phase 3 with only remaining tasks. On decline: fresh session.
-- **`--resume` but no interrupted session:** warn "No interrupted sessions found. Starting fresh."
-- **No `--resume` but interrupted session exists:** ask "Found interrupted session [ID]. Resume it, or start fresh?"
-- **Stale sessions found (no progress):** ask "Found N stale swarm sessions. Clean up orphan panes? [Y/n]". If yes, call `swarm_cleanup` on each stale session directory.
+- `--resume` + interrupted → offer resume from last wave (reuse `SESSION_DIR`, `swarm_update_ledger_field "${SESSION_DIR}" "resumed_from" "${INTERRUPTED_SESSION_ID}"`). Decline → fresh.
+- `--resume` + nothing → warn, start fresh.
+- No flag + interrupted → ask resume or fresh.
+- Stale → offer `swarm_cleanup`.
 
 ### 0.4 Read Agent Registry
+Read `~/.claude/local-plugins/plugins/swarm/agents.yaml`. Verify at least one agent on PATH.
 
-Read `~/.claude/local-plugins/plugins/swarm/agents.yaml`. Verify that at least one agent's command is available on PATH (e.g., `which codex`). Warn if missing.
+### 0.5 Initialize Session (Tier 2/3 only)
 
-### 0.5 Initialize Session
-
-> **Reached only if Phase 0.0 selected Tier 2 or 3.** Tiers 0/1 never run this — they have no `.swarm/` session, no ledger, no PRE_SWARM_SHA.
-
-**Pre-flight: PWD must be a git repo.** Phase 4 review context requires a valid `PRE_SWARM_SHA..HEAD` diff baseline. If the current working directory is not inside a git repo, `git rev-parse HEAD` silently captures a parent repo's SHA (or fails), and the Phase 4 diff becomes meaningless or destructive. Refuse to init with a clear message rather than silently running against a wrong baseline.
+**Pre-flight: PWD must be a git repo** — Phase 4 needs `PRE_SWARM_SHA..HEAD` diff baseline.
 
 ```bash
-# Pre-flight repo check — refuse to init outside a git repo
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "ERROR: /swarm:rocky Phase 0.5 requires a git repo working directory." >&2
-  echo "       Current PWD ($(pwd)) is not inside a git repo." >&2
-  echo "       cd to the target repo before invoking /swarm:rocky, or use --repo <path> (future)." >&2
-  exit 1
-fi
-
-PRE_SWARM_SHA=$(git rev-parse HEAD)  # anchor for Phase 4 review diff
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "ERROR: /swarm:rocky requires a git repo. cd to target repo first." >&2; exit 1; }
+PRE_SWARM_SHA=$(git rev-parse HEAD)
 SESSION_ID=$(swarm_new_session "$(pwd)")
 SESSION_DIR="$(pwd)/.swarm/${SESSION_ID}"
 swarm_init_ledger "${SESSION_DIR}" "${SESSION_ID}" "${MUX}"
 swarm_ensure_gitignore "$(pwd)"
-
-# Best-effort cache-sync validation — warn if source and cache diverge.
-# Non-blocking: prints warnings to stderr but does not stop init. Catches
-# the case where someone edited a rocky source file and forgot to sync
-# the plugin cache (see swarm_sync_plugin_cache in lib/swarm-transport.sh).
-if ! swarm_validate_cache_sync "swarm" >&2; then
-  echo "WARNING: /swarm:rocky source and plugin cache have diverged. Run swarm_sync_plugin_cache on the files above or re-run the cache sync before trusting runtime behavior." >&2
-fi
-```
-
-Set CMUX sidebar (if available):
-```bash
+swarm_validate_cache_sync "swarm" >&2 || echo "WARNING: source/cache diverged. Run swarm_sync_plugin_cache." >&2
 swarm_set_status "Swarm Leader"
 swarm_set_progress "Init" "0.05"
 ```
 
-## Phase 0.6: Memory Retrieval Preflight
+## Phase 0.6: Memory Retrieval Preflight (Tier 2/3 only)
 
-> **Reached only if Phase 0.0 selected Tier 2 or 3.** Tiers 0/1 never run this because they do not initialize `SESSION_DIR`, do not route through Phase 1, and do not write swarm task specs.
-
-Run memory retrieval before plan/context routing so the orchestrator can reuse prior notes, bug writeups, and project memory when available. This complements MemPalace; it does not replace it and it does not introduce any third memory store beyond Luke's existing markdown memory corpora and schema (`name:`, `description:`, `type:`).
-
-Two-pass design:
-- **Pass 1 lexical scan:** read only top-level `.md` files in `~/.claude/memory` and `~/.claude/projects/-Users-lukelee/memory`, excluding basenames `log.md`, `lint_report.md`, and `MEMORY.md`. Use the filename surface plus top-of-file frontmatter `name:` and `description:` when present.
-- **Pass 2 MemPalace semantic fallback:** STUB ONLY in v1. It exists to complement future MemPalace retrieval when Pass 1 is weak, but `project_mempalace.md` documents the current multi-writer HNSW bug, so no live semantic retrieval runs here yet.
+Lexical retrieval over Luke's memory corpora:
+- **Pass 1 lexical:** `.md` files in `~/.claude/memory` + `~/.claude/projects/-Users-lukelee/memory` (excluding log/lint/MEMORY.md). Scores via frontmatter `name:`/`description:` + filename tokens.
 
 ```bash
 swarm_memory_preflight "${SESSION_DIR}" "${ARGUMENTS}"
 swarm_set_progress "Memory Preflight" "0.07"
 ```
 
-If `swarm_memory_preflight` exits non-zero, stop and surface the error before continuing; later phases consume `${SESSION_DIR}/memory-hits.md`, and this flow must not proceed without a successful preflight artifact.
+If `swarm_memory_preflight` exits non-zero, stop and surface the error — later phases require `${SESSION_DIR}/memory-hits.md`.
 
-This writes `${SESSION_DIR}/memory-hits.md`. Phase 1 routing and Phase 2 plan decomposition consume it, and plan authors SHOULD read it before writing task specs because it can surface prior decisions, lessons, and convictions that should shape task boundaries and acceptance criteria.
+## Phase 1: Context Detection
 
-## Phase 1: Context Detection & Complexity Classification
+### 1.1 Check for Superpowers Artifacts
+Search: `docs/superpowers/specs/*-design.md` (specs), `docs/superpowers/plans/*-plan.md` or `.plans/*.md` (plans).
 
-### 1.1 Check for Existing Superpowers Artifacts
-
-Search for: (1) `docs/superpowers/specs/*-design.md` — recent design specs; (2) `docs/superpowers/plans/*-plan.md` OR `.plans/*.md` — implementation plans.
-
-### 1.1.1 Parallel Context Gathering (complex tasks only)
-
-Before invoking brainstorming for complex tasks, dispatch up to 3 parallel SDD exploration subagents to accelerate context gathering:
-
+### 1.1.1 Parallel Context Gathering (complex tasks)
+Up to 3 parallel Explore subagents before brainstorming. Skip for simple tasks.
 ```
 Agent(subagent_type="Explore", name="arch-scan", prompt="Scan codebase architecture: directory structure, key modules, tech stack, entry points")
-Agent(subagent_type="Explore", name="pattern-scan", prompt="Find similar patterns for [task description]: analogous implementations, conventions, reusable utilities")
-Agent(subagent_type="Explore", name="test-scan", prompt="Identify test patterns: framework, fixture conventions, coverage areas, how to verify [task description]")
+Agent(subagent_type="Explore", name="pattern-scan", prompt="Find similar patterns for [task]: analogous implementations, conventions, reusable utilities")
+Agent(subagent_type="Explore", name="test-scan", prompt="Identify test patterns: framework, fixtures, coverage areas, how to verify [task]")
 ```
 
-Feed findings into brainstorming/planning. Skip for simple tasks.
-
-### 1.2 Route Based on Context
+### 1.2 Route
 
 | Found | Action |
 |-------|--------|
-| Spec + plan | Read plan, decompose into work units → Phase 2 |
-| Spec only | Invoke `Skill("superpowers:writing-plans")` → then Phase 2 |
-| Nothing + complex task | Run 1.1.1 parallel research → `Skill("superpowers:brainstorming")` → writing-plans → Phase 2 |
-| Nothing + simple task | Skip to Phase 3 (two-agent loop) |
+| Spec + plan | Read plan → Phase 2 |
+| Spec only | `Skill("superpowers:writing-plans")` → Phase 2 |
+| Nothing + complex | 1.1.1 → `Skill("superpowers:brainstorming")` → writing-plans → Phase 2 |
+| Nothing + simple | Skip to Phase 3 |
 
-### 1.3 Tier-2 vs Tier-3 sub-classification
+### 1.3 State classification to user
+State Tier 2 vs Tier 3 sub-classification to the user and let them override. Phase 0.0's tier is binding; this picks the internal Phase 3 path (3.5 single-coder vs 3.3 wave dispatch).
 
-You are here because Phase 0.0 selected Tier 2 or Tier 3. Now classify which path to take inside Phase 3:
+## Phase 1.5: Grey Area Discussion
 
-**Tier 2 — single-coder swarm path (Phase 3.5):** 1 substantive task (or task set with strict ordering). Sequential SDD pattern is the right shape. Dispatched to one coder agent (Codex pane by default — runs SDD internally; or Claude via in-process Skill invocation when `--agents claude`).
+**Skip when:** simple task, `--skip-discuss`, or no ambiguous decisions.
 
-**Tier 3 — multi-coder wave dispatch (Phase 3.3):** Multiple tasks groupable into parallel waves with disjoint scopes. Dispatched to multiple coder agents simultaneously (Codex panes by default via `swarm_spawn_agent`; Claude teammates via Native AgentTeam when `--agents claude` — see `references/phase-3-dispatch.md`).
-
-State your classification to the user and let them override. Phase 0.0's tier choice is binding; this section only picks the *internal* path within the selected tier.
-
-## Phase 1.5: Pre-Execution Discuss (Grey Areas)
-
-**Skip this phase when:** simple task (two-agent loop), `--skip-discuss` flag, or manager judges the plan has no ambiguous decisions.
-
-After reading the plan (Phase 1.1) and before writing task files (Phase 2):
-
-### 1.5.1 Scan for grey areas
-
-Read the plan and identify decisions that are ambiguous or could go multiple ways: technology choices ("use X or Y?"), data format decisions ("JSON vs YAML?", "REST vs GraphQL?"), scope boundaries ("include error handling for X?"), architecture decisions ("single file vs split?"), naming conventions unclear from spec.
-
-### 1.5.2 Present as batch table
-
-Instead of asking one-by-one (slow), present 3-5 grey areas with recommendations:
+Scan plan for ambiguous decisions. Present 3–5 as batch table with recommendations:
 
 ```markdown
-## Pre-Execution Decisions
-
 | # | Grey Area | Recommendation | Alternative |
 |---|-----------|---------------|-------------|
 | 1 | Auth approach | JWT tokens | Session cookies |
-| 2 | Config format | YAML (matches existing) | JSON |
-| 3 | Error response shape | `{error, code, detail}` | `{message, status}` |
-
-Accept all, or specify which to change?
 ```
 
-### 1.5.3 Embed decisions
-
-User responds: accept all (fast path) or override specific items. Store resolved decisions for embedding into task files in Phase 2. Each task file will include a `## Decisions` section with grey areas relevant to that task.
-
-If no grey areas found → skip silently, proceed to Phase 2.
+User accepts all or overrides. Embed resolved decisions into Phase 2 task files' `## Decisions` section.
 
 ## Phase 2: Plan Decomposition
 
-Read the implementation plan and decompose into task files.
-Before decomposing, read `${SESSION_DIR}/memory-hits.md` because it surfaces prior decisions / lessons / convictions that should inform task boundaries and acceptance criteria.
+Read plan + `${SESSION_DIR}/memory-hits.md`. For each work unit, write `${SESSION_DIR}/tasks/task-NNN.md`:
 
-For each logical work unit in the plan:
+```markdown
+# Task NNN: [title]
+## Context
+Project: [pwd] | Branch: [branch] | Session: [id] | Wave: [post-grouping]
+## Depends On
+[task-NNN or empty]
+## Files to Touch
+[file list]
+## Decisions
+[resolved grey areas from Phase 1.5]
+## Assignment
+[what to implement]
+## Acceptance Criteria
+[what "done" means]
+## Instructions
+Write result to: [task-NNN.result]
+Format: Status (DONE|PARTIAL|NEEDS_HELP|FAILED), Files Changed, Summary, Issues, Confidence (HIGH/MEDIUM/LOW).
+- DONE=all ACs met. PARTIAL=hit specific blocker (describe it). NEEDS_HELP=uncertain (describe attempts). FAILED=cannot proceed (explain why).
+- **Correctness over completion.** Honest incompleteness > forced solution.
+- **Questions:** write to task-NNN.question, WAIT for task-NNN.answer (max 5/task).
+```
 
-1. Write `${SESSION_DIR}/tasks/task-NNN.md` with:
-   ```markdown
-   # Task NNN: [title]
+### Decomposition Quality Gate
 
-   ## Context
-   - Project: [pwd]
-   - Branch: [current git branch]
-   - Session: [session_id]
-   - Wave: [assigned after grouping]
+Before wave grouping, verify each task file against the doctrine:
 
-   ## Depends On
-   - [task-NNN that must complete before this one, or empty]
+| Check | Pass condition |
+|-------|---------------|
+| Self-contained | Agent can start without asking other agents for decisions |
+| Specific verbs | Assignment uses `add`, `rename`, `extract`, `replace` — not `improve`, `clean up` |
+| Bounded scope | Files to Touch is explicit; no open-ended "find and fix" |
+| Falsifiable ACs | Each AC is mechanically checkable (test, grep, file exists) |
+| Right granularity | One semantic unit — not bundled exploration+design+impl+QA |
+| No hidden deps | If task B needs task A's output, B is in a later wave |
 
-   ## Files to Touch
-   - [list of files this task will read or write]
+If a task fails any check, **rewrite the task** — don't dispatch and hope. Bad decomposition is the #1 cause of swarm failure, not weak models.
 
-   ## Decisions
-   - [resolved grey areas from Phase 1.5, relevant to this task]
-
-   ## Assignment
-   [detailed description of what to implement]
-
-   ## Acceptance Criteria
-   - [what "done" means]
-
-   ## Instructions
-   Write your result to: [path to task-NNN.result]
-   Format:
-   - Status: DONE | PARTIAL | NEEDS_HELP | FAILED
-   - Files Changed: [list]
-   - Summary: [what you did]
-   - Issues: [any problems encountered]
-   - Confidence: [HIGH/MEDIUM/LOW — how confident you are in the solution]
-
-   Status guide:
-   - DONE: completed all acceptance criteria
-   - PARTIAL: made meaningful progress but hit a specific blocker (describe it)
-   - NEEDS_HELP: uncertain about approach — describe what you tried and what's unclear
-   - FAILED: attempted and cannot proceed (explain why)
-
-   **Correctness over completion.** Honest incompleteness is better than a forced
-   solution that technically passes but violates intent. If constraints seem impossible
-   or mis-specified, explain the mismatch rather than gaming around it.
-
-   **Conversation protocol — if you need clarification:**
-   Write your question to: [path to task-NNN.question]
-   Then WAIT — do not proceed until [path to task-NNN.answer] appears.
-   Read the answer, then continue your work.
-   You may ask up to 5 questions per task.
-   ```
-
-2. After writing ALL task files, run wave grouping:
-   ```bash
-   WAVE_RESULT=$(swarm_group_waves "${SESSION_DIR}")
-   WAVE_EXIT=$?
-   ```
-
-3. Handle wave grouping result:
-   - **Exit 0 (success)**: Parse wave assignments, write wave number into each task's `## Context` section, update ledger `wave_count`.
-   - **Exit 2 (cycle detected)**: Present the cycle to the user. Ask them to resolve the circular dependency by rewriting task boundaries. Do NOT proceed to Phase 3.
-
-4. If `--sequential` flag: override all wave assignments to sequential (wave N = task N).
-
-5. Update ledger:
-   ```bash
-   swarm_update_ledger_field "${SESSION_DIR}" "tasks_total" "N"
-   swarm_update_ledger_field "${SESSION_DIR}" "wave_count" "W"
-   ```
-
-If `--dry-run`: present the task list with wave assignments and team composition, then stop.
+Wave grouping:
+```bash
+WAVE_RESULT=$(swarm_group_waves "${SESSION_DIR}")  # exit 0=success, 2=cycle→present to user, stop
+swarm_update_ledger_field "${SESSION_DIR}" "tasks_total" "N"
+swarm_update_ledger_field "${SESSION_DIR}" "wave_count" "W"
+```
+`--sequential` → wave N = task N. `--dry-run` → present plan + stop.
 
 ```bash
 swarm_set_progress "Planning" "0.15"
@@ -363,36 +254,32 @@ swarm_set_progress "Planning" "0.15"
 
 ## Phase 2.5 — Plan Review Gate
 
-**Skip when:** simple task (two-agent loop), `--skip-discuss` flag, or single-task plan.
+**Skip when:** simple task, `--skip-discuss`, or single-task plan.
 
-> Spawns Codex plan reviewer pane(s) (1 by default; `--review-agents N` for N reviewers, with adversarial framing for extras), polls results, consolidates into a batch table, runs **2.5.3.5 Opus self-evaluation + pushback** (HARD RULE — max 3 rounds: Opus reads each task as if implementer, marks ASSURED/NOT_ASSURED, pushes back to reviewer pane with specific concern, escalates to user after 3 rounds), then kills reviewer panes.
+Spawns Codex plan reviewer pane(s), polls results, consolidates findings, runs Opus pushback (max 3 rounds per hard rule), kills reviewer panes.
 
-**See:** `references/phase-2-5-plan-review.md` for the full 2.5.1–2.5.4 implementation, including the spawn commands, the consolidated findings table format, the pushback prompt template, and the cleanup loop.
-
-```bash
-swarm_set_progress "Plan Reviewed" "0.20"
-```
+**See:** `references/phase-2-5-plan-review.md` for 2.5.1–2.5.4 (spawn, findings table, pushback template, cleanup).
 
 ## Phase 3 — Execute
 
-> Wave dispatch loop. Captures regression baseline (when `wave_count > 1`), reads `agents.yaml`, picks dispatch method per task (pane vs SDD subagent), spawns Codex panes via `swarm_spawn_agent` OR Claude teammates via Native AgentTeam (`TeamCreate` + `Agent(team_name=...)` for Tier 3 `--agents claude`), runs the conversation polling loop (max 5 question turns per task), evaluates results with the self-corrective REVISE flow (max 3 rounds per ORCHESTRATOR PUSHBACK hard rule), and runs between-wave regression checks. Phase 3.5 is the Tier 2 single-coder path (Codex SDD pane OR in-process `Skill("superpowers:subagent-driven-development")` for Claude).
+Wave dispatch: regression baseline, agent spawn (Codex panes or Claude AgentTeam), conversation polling (max 5 questions/task), REVISE flow (max 3 rounds), between-wave regression checks. Phase 3.5 = Tier 2 single-coder path.
 
-**See:** `references/phase-3-dispatch.md` for sections 3.1 (regression baseline), 3.2 (spawn agents + grid layout), 3.2.1 (dispatch method selection), 3.2.2 (Tier 3 Claude Parallel via Native AgentTeam), 3.3 (wave dispatch loop with REVISE flow), 3.3.1 (conversation termination), 3.4 (Claude subagent fallback), 3.5 (Tier 2 single-coder swarm path).
+**See:** `references/phase-3-dispatch.md` for 3.1–3.5 (baseline, spawn, wave loop, REVISE, termination, fallback, Tier 2 path).
 
 ## Phase 4 — Review
 
-> Cross-model code review gate. Determines reviewer per the cross-review rule (Codex coder → Claude Opus reviewer; Claude coder → Codex reviewer), runs pre-flight validation (warns if coder == reviewer), prepares review context (`PRE_SWARM_SHA..HEAD_SHA` diff + aggregated `.result` files). Then either: **4.3a** Codex pane invokes `superpowers:requesting-code-review` from `~/.codex/superpowers/skills/requesting-code-review/`, OR **4.3b** Opus invokes `Skill("superpowers:requesting-code-review")` in-process (with two-stage SDD review: Stage 1 spec compliance, Stage 2 code quality). Fix loop addresses Critical/Important issues with up to 3 rounds per the pushback hard rule.
+Cross-model code review: determine reviewer (opposite family), prepare context (`PRE_SWARM_SHA..HEAD` diff + results). 4.3a: Codex pane runs `superpowers:requesting-code-review`. 4.3b: Opus runs it in-process (two-stage: spec → quality). Fix loop: up to 3 rounds for Critical/Important.
 
-**See:** `references/phase-4-review.md` for sections 4.1 (reviewer determination + pre-flight), 4.2 (review context prep), 4.3a (Codex review via Superpowers skill), 4.3b (Claude two-stage review), 4.4 (fix loop).
+**See:** `references/phase-4-review.md` for 4.1–4.4.
 
 ## Phase 5 — Verification Routing
 
-> Runs automated checks (`pytest --tb=short`, `git diff --stat`, `git status --short`), applies the **flaky test pre-filter** (rerun failing tests up to 2× with `pytest --lf`, classify as deterministic / flaky / infrastructure), classifies the verification state (`passed` / `gaps_found` / `human_needed`), and routes accordingly. The **gap closure cycle** (max 1 round, regression-gated via JUnit XML snapshots) creates targeted fix tasks rather than retrying originals. The **human-needed checklist** presents items that cannot be auto-verified.
+Automated checks (pytest, git diff/status) → flaky pre-filter (rerun 2×, classify deterministic/flaky/infra) → state classification (passed/gaps_found/human_needed). Gap closure: max 1 round, regression-gated, targeted fix tasks.
 
-**See:** `references/phase-5-verification.md` for sections 5.1 (automated checks), 5.2 (flaky pre-filter), 5.3 (state classification), 5.4 (gap closure cycle), 5.5 (human-needed checklist).
+**See:** `references/phase-5-verification.md` for 5.1–5.5.
 
 ## Phase 6 — Done & Error Handling
 
-> Generates `${SESSION_DIR}/report.md` with session metadata, completed tasks, files changed, test results, and review findings. Cleans up panes (unless `--keep-panes`). Presents the report to the user. Offers next steps: commit (conventional format), `superpowers:verification-before-completion` final gate, `superpowers:finishing-a-development-branch` for PR creation. The error handling table covers all failure modes (agent crash, malformed result, all agents fail, cycle, regression, gap closure regression, etc.).
+Generate `${SESSION_DIR}/report.md`, cleanup panes (unless `--keep-panes`), present report. Next steps: commit, `superpowers:verification-before-completion`, `superpowers:finishing-a-development-branch`.
 
-**See:** `references/phase-6-and-errors.md` for the full Phase 6 report template + cleanup commands AND the complete error handling table (16 scenarios).
+**See:** `references/phase-6-and-errors.md` for report template + error handling (16 scenarios).

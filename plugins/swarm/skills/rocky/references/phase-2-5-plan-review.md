@@ -20,19 +20,27 @@ When N > available model families: assign one reviewer per model family first, t
 
 ## 2.5.2 Spawn Codex reviewers
 
-**1 reviewer (default):**
+> **Always use `swarm_spawn_reviewer` (single) or `swarm_get_agent_field` (parallel) for command lookup.** Never hardcode `"codex"` as the command — the correct interactive command comes from `agents.yaml`. This prevents CLI flag mistakes (e.g., `--approval-policy` is MCP-only, not CLI).
+
+**1 reviewer (default) — use the wrapper:**
 
 ```bash
-PANE1=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
-swarm_wait_agent_ready "${PANE1}" 30
-swarm_pipe_prompt "${PANE1}" "Read the task files in ${SESSION_DIR}/tasks/ and explore the codebase yourself. Assess feasibility, risks, and completeness. Form your own assessment. Write to ${SESSION_DIR}/reviews/plan-review-standard.result with Status: APPROVED or Status: NEEDS_REVISION, then your findings."
+swarm_spawn_reviewer "codex" "${SESSION_DIR}" \
+  "${SESSION_DIR}/tasks/task-001.md" \
+  "Read the task files in ${SESSION_DIR}/tasks/ and explore the codebase yourself. Assess feasibility, risks, and completeness. Form your own assessment. Write to ${SESSION_DIR}/reviews/plan-review-standard.result with Status: APPROVED or Status: NEEDS_REVISION, then your findings." \
+  300 "right" "" "${SESSION_DIR}/reviews/plan-review-standard.result"
 ```
 
-**2 reviewers (with adversarial):**
+The wrapper handles spawn → wait → pipe → poll → kill automatically.
+
+**2 reviewers (with adversarial) — parallel dispatch:**
 
 ```bash
-PANE1=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
-PANE2=$(swarm_spawn_agent "Codex-Adversarial" "codex" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
+AGENT_CMD=$(swarm_get_agent_field "codex" "command_interactive")
+PANE1=$(swarm_spawn_agent "Codex-Reviewer" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "right")
+PANE2=$(swarm_spawn_agent "Codex-Adversarial" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "down" "${PANE1}")
+swarm_register_agent "${SESSION_DIR}" "Codex-Reviewer" "${PANE1}" "reviewer"
+swarm_register_agent "${SESSION_DIR}" "Codex-Adversarial" "${PANE2}" "reviewer"
 # Wait in parallel (background jobs + wait) — sequential is 30s × N worst case.
 swarm_wait_agent_ready "${PANE1}" 30 &
 swarm_wait_agent_ready "${PANE2}" 30 &

@@ -181,15 +181,29 @@ Adding a fifth specialist, or populating `performance` hot paths, means editing 
 
 Spawn a Codex pane and invoke the **Superpowers `requesting-code-review` skill** from `~/.codex/superpowers/skills/requesting-code-review/`. This is symmetric to Phase 4.3b which invokes `Skill("superpowers:requesting-code-review")` on the Claude side. Same Superpowers skill, both sides.
 
+> **Always use `swarm_spawn_reviewer` (single) or `swarm_get_agent_field` (parallel) for Codex command lookup.** Never hardcode `"codex"` as the spawn command.
+
+**When no specialists** (simple path — wrapper handles full lifecycle):
+
 ```bash
-# CORE_PANE is named distinctly so the 4.3c.1 specialist loop cannot shadow it; `[ ! -s ... ]` short-circuits when specialists.json is absent so python3 does not crash on FileNotFoundError.
-CORE_PANE=$(swarm_spawn_agent "Codex-Reviewer" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+if [ ! -s "${SESSION_DIR}/reviews/specialists.json" ] || python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if not data else 1)' "${SESSION_DIR}/reviews/specialists.json"; then
+  swarm_spawn_reviewer "codex" "${SESSION_DIR}" \
+    "${SESSION_DIR}/reviews/review-final.result" \
+    "Use superpowers:requesting-code-review to review the code changes between ${BASE_SHA}..${HEAD_SHA}. Focus on: correctness, edge cases, security, test coverage, cross-component consistency. Write findings to ${SESSION_DIR}/reviews/review-final.result following the Section 4.0 Review output schema in this document: per-issue yaml block with severity (P0-P3), route (coder/orchestrator/user), requires_verification (bool), verification: {runner, target} (required when requires_verification is true), plus file/line when localized." \
+    600 "right" "" "${SESSION_DIR}/reviews/review-final.result"
+fi
+```
+
+**When specialists exist** (parallel path — core pane shared with 4.3c.1 loop):
+
+```bash
+# CORE_PANE is named distinctly so the 4.3c.1 specialist loop cannot shadow it.
+AGENT_CMD=$(swarm_get_agent_field "codex" "command_interactive")
+CORE_PANE=$(swarm_spawn_agent "Codex-Reviewer" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "right")
+swarm_register_agent "${SESSION_DIR}" "Codex-Reviewer" "${CORE_PANE}" "reviewer"
 swarm_wait_agent_ready "${CORE_PANE}" 30
 swarm_pipe_prompt "${CORE_PANE}" "Use superpowers:requesting-code-review to review the code changes between ${BASE_SHA}..${HEAD_SHA}. Focus on: correctness, edge cases, security, test coverage, cross-component consistency. Write findings to ${SESSION_DIR}/reviews/review-final.result following the Section 4.0 Review output schema in this document: per-issue yaml block with severity (P0-P3), route (coder/orchestrator/user), requires_verification (bool), verification: {runner, target} (required when requires_verification is true), plus file/line when localized."
-if [ ! -s "${SESSION_DIR}/reviews/specialists.json" ] || python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if not data else 1)' "${SESSION_DIR}/reviews/specialists.json"; then
-  swarm_poll_result "${SESSION_DIR}/reviews/review-final.result" 600
-  swarm_kill_agent "${CORE_PANE}"
-fi
+# Core pane poll+kill is handled by 4.3c.1 shared wait path below.
 ```
 
 On this path, the core 4.3a pane and any triggered 4.3c.1 specialist panes are spawned together immediately after Section 4.2 context prep. When `specialists.json` is non-empty, 4.3c.1 owns the shared wait/cleanup path.
@@ -248,12 +262,14 @@ done < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); [print(
 if [ ${#SPECIALIST_KEYS[@]} -eq 0 ]; then
   echo "No specialist triggers; skip 4.3c.1"
 else
+  AGENT_CMD=$(swarm_get_agent_field "codex" "command_interactive")
   SPECIALIST_PANES=()
   EXPECTED_RESULTS=("${SESSION_DIR}/reviews/review-final.result")
   for key in "${SPECIALIST_KEYS[@]}"; do
-    PANE=$(swarm_spawn_agent "Codex-Specialist-${key}" "codex" "$(pwd)" "${SESSION_DIR}" "right")
+    PANE=$(swarm_spawn_agent "Codex-Specialist-${key}" "${AGENT_CMD}" "$(pwd)" "${SESSION_DIR}" "right")
     SPECIALIST_PANES+=("${PANE}")
     EXPECTED_RESULTS+=("${SESSION_DIR}/reviews/review-specialist-${key}.result")
+    swarm_register_agent "${SESSION_DIR}" "Codex-Specialist-${key}" "${PANE}" "reviewer"
     swarm_wait_agent_ready "${PANE}" 30 &
   done
   wait

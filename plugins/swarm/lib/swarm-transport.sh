@@ -316,7 +316,11 @@ swarm_check_agent_alive() {
       cmux read-screen --surface "${pane_id}" --lines 1 >/dev/null 2>&1
       ;;
     tmux)
-      tmux display-message -p -t "${pane_id}" '#{pane_id}' >/dev/null 2>&1
+      # `tmux display-message -t <dead-pane>` is unreliable — it returns
+      # success even for panes that have exited. Use a membership check
+      # against `list-panes -a` instead, which is authoritative.
+      # Pane ids look like `%123`; anchor the grep so `%12` doesn't match `%123`.
+      tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qxF "${pane_id}"
       ;;
     none)
       if [[ "${pane_id}" == pid:* ]]; then
@@ -340,15 +344,89 @@ swarm_write_task() {
 }
 
 swarm_check_result() {
+  # Completion detection for task/review result files.
+  #
+  # Usage:
+  #   swarm_check_result <task_or_result_path> [mode] [stability_seconds] [min_bytes]
+  #
+  # mode:
+  #   default (back-compat) — fast paths only. TRUE iff file contains
+  #     ^Status: marker (legacy coder schema) OR ^## Status$ + next non-blank
+  #     line exactly APPROVED or NEEDS_REVISION (phase-4 markdown schema).
+  #   review — fast paths first, then mtime-stability fallback: TRUE when
+  #     file is ≥ min_bytes AND mtime age ≥ stability_seconds.
+  #
+  # Opt-in for mtime fallback is review mode only — keeps coder polling
+  # paths from false-positiving on malformed/partial output.
+  #
+  # Returns 0 on TRUE, 1 on FALSE. Writes nothing to stdout.
   local task_file="$1"
+  local mode="${2:-default}"
+  local stability_seconds="${3:-2}"
+  local min_bytes="${4:-30}"
+
   # Accept both .md task files (strip .md, append .result) and .result review
   # files (used directly). Without this guard, a review path like
   # .../reviews/review-final.result is rewritten to review-final.result.result
   # and the check silently never fires. See fix(swarm) 2026-04-09.
   local result_file="${task_file}"
   [[ "${task_file}" == *.result ]] || result_file="${task_file%.md}.result"
-  # Only accept results that contain the completion marker
-  [[ -f "${result_file}" ]] && [[ -s "${result_file}" ]] && grep -q '^Status:' "${result_file}"
+
+  # Basic existence / non-empty guard (applies to ALL paths).
+  [[ -f "${result_file}" ]] || return 1
+  [[ -s "${result_file}" ]] || return 1
+
+  # FAST PATH 1 — legacy coder ^Status: marker. min_bytes does NOT apply here:
+  # `Status: DONE\n` is 13 bytes and is a valid completion signal.
+  grep -q '^Status:' "${result_file}" 2>/dev/null && return 0
+
+  # FAST PATH 2 — phase-4 markdown schema: `## Status` on its own line,
+  # followed (after zero or more blank lines) by an exact verdict token from
+  # the locked vocabulary {APPROVED, NEEDS_REVISION}. Whitespace tolerant.
+  if awk '
+    BEGIN { found_header = 0 }
+    {
+      # Strip trailing whitespace
+      sub(/[[:space:]]+$/, "")
+      if (found_header) {
+        if ($0 == "") next               # skip blank lines after header
+        if ($0 == "APPROVED" || $0 == "NEEDS_REVISION") { found = 1; exit }
+        exit                              # any other non-blank breaks the match
+      }
+      if ($0 == "## Status") { found_header = 1 }
+    }
+    END { exit (found ? 0 : 1) }
+  ' "${result_file}" 2>/dev/null; then
+    return 0
+  fi
+
+  # FALLBACK (review mode only) — mtime stability + min_bytes gate.
+  # Rationale: reviewer prompts emit verdict text that may not match the
+  # locked vocabulary (e.g. "APPROVED AS-IS", "REVISE", freeform).
+  # `quiet for N seconds` is our completion proxy for such outputs.
+  # NOTE: This cannot distinguish a completed file from a long-paused
+  # partial write. Prompts should encourage atomic writes (single redirect,
+  # heredoc, or Write tool) to avoid that edge case.
+  if [[ "${mode}" == "review" ]]; then
+    local size
+    size=$(wc -c < "${result_file}" 2>/dev/null | tr -d ' ')
+    [[ -n "${size}" ]] || return 1
+    (( size >= min_bytes )) || return 1
+
+    local mtime_epoch now_epoch age
+    if mtime_epoch=$(stat -f %m "${result_file}" 2>/dev/null); then
+      :  # macOS/BSD path
+    elif mtime_epoch=$(stat -c %Y "${result_file}" 2>/dev/null); then
+      :  # GNU/Linux path
+    else
+      return 1
+    fi
+    now_epoch=$(date +%s)
+    age=$((now_epoch - mtime_epoch))
+    (( age >= stability_seconds )) && return 0
+  fi
+
+  return 1
 }
 
 swarm_read_result() {
@@ -371,20 +449,44 @@ swarm_clear_result() {
 }
 
 swarm_poll_result() {
+  # Poll until a task's result file reports completion, an optional pane dies,
+  # or the timeout elapses.
+  #
+  # Usage:
+  #   swarm_poll_result <task_file> [timeout] [interval] [pane_id] [mode]
+  #
+  # timeout   — seconds to wait before giving up (default 300)
+  # interval  — seconds between polls (default 5; reviewers pass 1 for snappy detection)
+  # pane_id   — optional: if provided and the pane is dead while the result file
+  #             is non-empty, return success immediately (handles crashed-but-wrote)
+  # mode      — passed through to swarm_check_result ("default" or "review")
   local task_file="$1"
   local timeout="${2:-300}"
   local interval="${3:-5}"
+  local pane_id="${4:-}"
+  local mode="${5:-default}"
   local elapsed=0
 
-  # Validate task file exists (skip for review files which have no .md counterpart)
-  if [[ "${task_file}" != */reviews/* ]] && [[ ! -f "${task_file}" ]]; then
+  # Validate task file exists (skip for review files and direct .result paths)
+  if [[ "${task_file}" != */reviews/* ]] && [[ "${task_file}" != *.result ]] && [[ ! -f "${task_file}" ]]; then
     echo "ERROR: task file not found: ${task_file}" >&2
     return 1
   fi
 
+  local result_file="${task_file}"
+  [[ "${task_file}" == *.result ]] || result_file="${task_file%.md}.result"
+
   while (( elapsed < timeout )); do
-    if swarm_check_result "${task_file}"; then
+    if swarm_check_result "${task_file}" "${mode}"; then
       return 0
+    fi
+    # Pane-death tiebreaker: if the agent pane is dead AND the result file
+    # is non-empty, assume the agent wrote its output then crashed/exited.
+    # Skip if no pane_id was provided.
+    if [[ -n "${pane_id}" ]] && [[ -s "${result_file}" ]]; then
+      if ! swarm_check_agent_alive "${pane_id}" 2>/dev/null; then
+        return 0
+      fi
     fi
     sleep "${interval}"
     elapsed=$((elapsed + interval))
@@ -392,19 +494,109 @@ swarm_poll_result() {
   return 1
 }
 
+swarm_poll_and_reap() {
+  # Poll multiple result files, killing each pane as its result arrives.
+  # Panes that finish early are reaped immediately instead of waiting for all.
+  #
+  # Usage:
+  #   swarm_poll_and_reap 120 3 \
+  #     "/path/task-1.result:%31" \
+  #     "/path/task-2.result:%32" \
+  #     "/path/task-3.result:%33"
+  #
+  # Each argument after timeout/interval is "result_path:pane_id".
+  # Returns 0 if all completed, 1 if any timed out (timed-out panes are also killed).
+  local timeout="${1:?timeout required}"
+  local interval="${2:-3}"
+  shift 2
+
+  local -a pending=("$@")
+  local elapsed=0
+  local all_done=true
+
+  while (( elapsed < timeout )) && (( ${#pending[@]} > 0 )); do
+    local -a still_pending=()
+    for entry in "${pending[@]}"; do
+      local result_path="${entry%%:*}"
+      local pane_id="${entry##*:}"
+      if swarm_check_result "${result_path}"; then
+        echo "REAPED: ${result_path} — killing pane ${pane_id}" >&2
+        swarm_kill_agent "${pane_id}" 2>/dev/null || true
+      else
+        still_pending+=("${entry}")
+      fi
+    done
+    pending=("${still_pending[@]+"${still_pending[@]}"}")
+    if (( ${#pending[@]} > 0 )); then
+      sleep "${interval}"
+      elapsed=$((elapsed + interval))
+    fi
+  done
+
+  # Kill any remaining timed-out panes
+  if (( ${#pending[@]} > 0 )); then
+    for entry in "${pending[@]}"; do
+      local pane_id="${entry##*:}"
+      echo "TIMEOUT: ${entry%%:*} — killing pane ${pane_id}" >&2
+      swarm_kill_agent "${pane_id}" 2>/dev/null || true
+    done
+    all_done=false
+  fi
+
+  ${all_done} && return 0 || return 1
+}
+
 # ── Agent Prompt Piping ───────────────────────────────────────────
+
+_swarm_prompt_temp_dir() {
+  printf '%s\n' '/tmp/claude-swarm'
+}
+
+_swarm_register_prompt_file() {
+  local prompt_file="$1"
+  [[ -n "${prompt_file}" ]] || return 0
+  _SWARM_PROMPT_TEMP_FILES+=("${prompt_file}")
+}
+
+_swarm_cleanup_prompt_files() {
+  local prompt_file
+  local prompt_files=("${_SWARM_PROMPT_TEMP_FILES[@]}")
+  (( ${#prompt_files[@]} > 0 )) || return 0
+
+  for prompt_file in "${prompt_files[@]}"; do
+    [[ -n "${prompt_file}" ]] && rm -f "${prompt_file}"
+  done
+
+  _SWARM_PROMPT_TEMP_FILES=()
+}
+
+_swarm_write_prompt_tempfile() {
+  local pane_id="$1"
+  local prompt="$2"
+  local prompt_dir
+  _SWARM_LAST_PROMPT_FILE=""
+  prompt_dir=$(_swarm_prompt_temp_dir)
+  mkdir -p "${prompt_dir}" || return 1
+
+  local pane_slug="${pane_id//[^A-Za-z0-9_.-]/_}"
+  local prompt_file
+  prompt_file=$(mktemp "${prompt_dir}/prompt-${pane_slug}-$$-${RANDOM}.XXXXXX.md") || return 1
+
+  printf '%s' "${prompt}" > "${prompt_file}" || {
+    rm -f "${prompt_file}"
+    return 1
+  }
+  chmod 600 "${prompt_file}" 2>/dev/null || true
+  _swarm_register_prompt_file "${prompt_file}"
+  _SWARM_LAST_PROMPT_FILE="${prompt_file}"
+}
 
 swarm_pipe_prompt() {
   local pane_id="$1"
   local prompt="$2"
   local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
 
-  # Wait for agent to be ready before sending
-  if [[ "${mux}" != "none" ]]; then
-    swarm_wait_agent_ready "${pane_id}" 30 || {
-      echo "WARNING: agent ${pane_id} not ready after 30s, sending anyway" >&2
-    }
-  fi
+  # Caller is responsible for readiness — no redundant check here.
 
   case "${mux}" in
     cmux)
@@ -431,17 +623,31 @@ swarm_pipe_prompt() {
         _swarm_pp_cleanup
         return 1
       fi
-      if ! tmux paste-buffer -b "${buf_name}" -d -t "${pane_id}" 2>/dev/null; then
+      # Use -p for bracketed paste (proper TUI signaling)
+      if ! tmux paste-buffer -p -b "${buf_name}" -d -t "${pane_id}" 2>/dev/null; then
         echo "ERROR: tmux paste-buffer failed for pane ${pane_id}" >&2
         _swarm_pp_cleanup
         return 1
       fi
-      # Small settle for Codex TUI to absorb the paste before Enter.
-      sleep 0.3
-      if ! tmux send-keys -t "${pane_id}" Enter 2>/dev/null; then
-        echo "ERROR: tmux send-keys Enter failed for pane ${pane_id}" >&2
-        _swarm_pp_cleanup
-        return 1
+      # Verify-and-retry Enter: check screen changed after C-m, retry if not.
+      # Codex shows "Working" or "thinking" when submit succeeds.
+      local before_enter after_enter submitted=0
+      before_enter=$(tmux capture-pane -p -t "${pane_id}" 2>/dev/null | tail -5)
+      for attempt in 1 2 3; do
+        sleep 0.1
+        tmux send-keys -t "${pane_id}" C-m 2>/dev/null || true
+        for _ in {1..6}; do
+          sleep 0.1
+          after_enter=$(tmux capture-pane -p -t "${pane_id}" 2>/dev/null | tail -5)
+          if [[ "${after_enter}" != "${before_enter}" ]] || \
+             echo "${after_enter}" | grep -qiE 'Working|thinking|Hullabaloo'; then
+            submitted=1
+            break 2
+          fi
+        done
+      done
+      if [[ ${submitted} -ne 1 ]]; then
+        echo "WARNING: Enter may not have been received by pane ${pane_id}" >&2
       fi
       _swarm_pp_cleanup
       ;;
@@ -486,6 +692,8 @@ swarm_cleanup() {
   local session_dir="$1"
   local ledger="${session_dir}/ledger.yaml"
 
+  _swarm_cleanup_prompt_files
+
   if [[ ! -f "${ledger}" ]]; then return 0; fi
 
   while IFS= read -r pane_id; do
@@ -502,6 +710,42 @@ swarm_cleanup() {
   swarm_update_ledger_field "${session_dir}" "phase" "done"
   swarm_set_progress "Done" "1.0"
   swarm_log "success" "Swarm session complete"
+}
+
+# ── Orphan Pane Cleanup ──────────────────────────────────────────
+
+swarm_cleanup_orphan_panes() {
+  # Kill tmux panes that were spawned by swarm but whose CLI has exited,
+  # leaving a bare bash shell. These are orphans from interrupted sessions.
+  #
+  # Identification: a pane is an orphan when:
+  #   - current command is "bash" (CLI exited, fell through to `; exec bash`)
+  #   - start command contains "codex" or "claude" (was a swarm-spawned agent)
+  #
+  # Panes still actively running their CLI are left alone.
+  #
+  # Usage: swarm_cleanup_orphan_panes
+  # Call at session start (Phase 0) or before spawning new panes.
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
+  [[ "${mux}" == "tmux" ]] || return 0
+
+  local killed=0
+  local orphan_pane orphan_cmd
+  while IFS=$'\t' read -r orphan_pane orphan_cmd; do
+    [[ -n "${orphan_pane}" ]] || continue
+    if [[ "${orphan_cmd}" == "bash" ]]; then
+      local start_cmd
+      start_cmd=$(tmux display-message -p -t "${orphan_pane}" '#{pane_start_command}' 2>/dev/null)
+      if [[ "${start_cmd}" == *"codex"* || "${start_cmd}" == *"claude"* ]]; then
+        echo "INFO: killing orphan pane ${orphan_pane} (${start_cmd})" >&2
+        swarm_kill_agent "${orphan_pane}" 2>/dev/null || true
+        killed=$((killed + 1))
+      fi
+    fi
+  done < <(tmux list-panes -a -F '#{pane_id}	#{pane_current_command}' 2>/dev/null)
+
+  [[ ${killed} -gt 0 ]] && echo "INFO: cleaned ${killed} orphan pane(s)" >&2
+  return 0
 }
 
 # ── Stale Session Detection ──────────────────────────────────────
@@ -674,7 +918,7 @@ STOPWORDS = {
 EXCLUDE = {'log.md', 'lint_report.md', 'MEMORY.md'}
 HOME = os.path.expanduser('~')
 ROOTS = [os.path.join(HOME, '.claude', 'memory'), os.path.join(HOME, '.claude', 'projects', '-Users-lukelee', 'memory')]
-WEAK_NOTICE = 'swarm_memory_preflight: Pass 1 weak (hits={0}, top_score={1}) — Pass 2 MemPalace semantic fallback disabled in v1, see project_mempalace.md'
+WEAK_NOTICE = 'swarm_memory_preflight: Pass 1 weak (hits={0}, top_score={1})'
 
 def tokenize(text):
     # Unicode-aware split so CJK (Korean/Chinese/Japanese) content tokenizes.
@@ -754,7 +998,6 @@ lines = [
     '- Task: {0}'.format(task_summary),
     '- Run at: {0}'.format(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')),
     '- Pass 1: {0} lexical hits (top 10 shown)'.format(total_hits),
-    '- Pass 2: skipped (MemPalace semantic fallback disabled in v1 — see project_mempalace.md multi-writer HNSW bug)',
     '- Confidence: {0}'.format('weak' if weak else 'strong'),
     '', '## Hits', '',
 ]
@@ -780,8 +1023,6 @@ except OSError as exc:
     print('swarm_memory_preflight: {0}'.format(exc), file=sys.stderr)
     sys.exit(1)
 
-# TODO: When Pass 2 is enabled, it should run a MemPalace semantic fallback over the same Luke memory corpora after a weak Pass 1 result; the trigger is `weak == True`.
-# Keep it stubbed here only: project_mempalace.md documents the current multi-writer HNSW issue, so no live MemPalace calls are allowed in v1.
 if weak:
     print(WEAK_NOTICE.format(total_hits, top_score), file=sys.stderr)
 PYEOF
@@ -1060,6 +1301,52 @@ swarm_get_completed_tasks() {
   done
 }
 
+# ── Agent Registry Helpers ────────────────────────────────────────
+
+swarm_get_agent_field() {
+  # Extract a scalar field value for a given agent from agents.yaml.
+  # Pure awk — no yq/jq dependency. Does not handle multi-line values.
+  #
+  # Usage:
+  #   CMD=$(swarm_get_agent_field "codex" "command_interactive")  # → codex
+  #   CMD=$(swarm_get_agent_field "claude" "command_exec")        # → claude --dangerously-skip-permissions -p
+  #
+  # Returns field value on stdout, exit 0. Empty + exit 1 if not found.
+  local agent_name="${1:?agent_name required}"
+  local field_name="${2:?field_name required}"
+  local agents_file="${HOME}/.claude/local-plugins/plugins/swarm/agents.yaml"
+
+  if [[ ! -f "${agents_file}" ]]; then
+    echo "ERROR: agents.yaml not found: ${agents_file}" >&2
+    return 1
+  fi
+
+  local value
+  value=$(awk -v agent="${agent_name}" -v field="${field_name}" '
+    BEGIN { found = 0 }
+    /^[^ #]/ { in_agent = 0 }
+    /^  [^ ]/ && in_agent { in_agent = 0 }
+    $0 ~ "^  " agent ":" { in_agent = 1; next }
+    in_agent && $1 == field ":" {
+      val = substr($0, index($0, ":") + 1)
+      gsub(/^[ \t]+/, "", val)
+      gsub(/[ \t]+$/, "", val)
+      if (val ~ /^".*"$/ || val ~ /^'\''.*'\''$/)
+        val = substr(val, 2, length(val) - 2)
+      print val
+      found = 1
+      exit
+    }
+    END { exit (found ? 0 : 1) }
+  ' "${agents_file}")
+
+  if [[ -n "${value}" ]]; then
+    echo "${value}"
+    return 0
+  fi
+  return 1
+}
+
 # ── Model Routing ────────────────────────────────────────────────
 
 swarm_classify_task() {
@@ -1273,12 +1560,12 @@ REVEOF
 }
 
 swarm_can_revise() {
-  # Check if more revisions are allowed (max 2).
+  # Check if more revisions are allowed (max 3, per ORCHESTRATOR PUSHBACK hard rule).
   local session_dir="$1"
   local task_id="$2"
   local count
   count=$(swarm_get_revision_count "${session_dir}" "${task_id}")
-  (( count < 2 ))
+  (( count < 3 ))
 }
 
 swarm_next_revision_num() {
@@ -1345,8 +1632,8 @@ swarm_poll_conversation() {
   local question_file="${task_file%.md}.question"
   local result_file="${task_file%.md}.result"
 
-  # Validate task file exists (skip for review files)
-  if [[ "${task_file}" != */reviews/* ]] && [[ ! -f "${task_file}" ]]; then
+  # Validate task file exists (skip for review files and direct .result paths)
+  if [[ "${task_file}" != */reviews/* ]] && [[ "${task_file}" != *.result ]] && [[ ! -f "${task_file}" ]]; then
     echo "ERROR: task file not found: ${task_file}" >&2
     return 1
   fi
@@ -1446,4 +1733,110 @@ swarm_get_discoveries() {
   else
     echo ""
   fi
+}
+
+# ── Reviewer Spawn Wrapper ───────────────────────────────────────
+# High-level wrapper that encapsulates the full reviewer pane lifecycle:
+# agent lookup → clear stale → spawn → register → wait ready → pipe → poll → cleanup.
+# Prevents common mistakes: wrong CLI flags, prompt piping to bare bash.
+
+swarm_spawn_reviewer() {
+  # Spawn a reviewer agent pane and run a review prompt to completion.
+  #
+  # Usage:
+  #   swarm_spawn_reviewer "codex" "${SESSION_DIR}" "${TASK_FILE}" \
+  #     "Review the plan in ${TASK_FILE}. Write result to ${TASK_FILE%.md}.result" \
+  #     300 "right" "" "${TASK_FILE%.md}.result"
+  #
+  # Returns 0 on success (result file written), 1 on failure/timeout.
+  # The spawned pane is killed on both success and failure.
+  local agent_name="${1:?agent_name required}"
+  local session_dir="${2:?session_dir required}"
+  local task_file="${3:?task_file required}"
+  local review_prompt="${4:?review_prompt required}"
+  local timeout="${5:-300}"
+  local split_dir="${6:-right}"
+  local split_from="${7:-}"
+  local result_file="${8:-${task_file%.md}.result}"
+
+  # ── 1. Guard: reject mux=none ──
+  local mux="${_SWARM_MUX:-$(swarm_detect_mux)}"
+  if [[ "${mux}" == "none" ]]; then
+    echo "ERROR: swarm_spawn_reviewer requires tmux or cmux (mux=none unsupported)" >&2
+    return 1
+  fi
+
+  # ── 1.5. Kill stale panes ──
+  # Layer 1: Kill reviewer panes from this session's ledger (interrupted wrapper).
+  # Layer 2: Kill orphan panes globally (crashed sessions with deleted temp dirs).
+  local ledger="${session_dir}/ledger.yaml"
+  if [[ -f "${ledger}" ]]; then
+    local stale_pane
+    while IFS= read -r stale_pane; do
+      [[ -n "${stale_pane}" ]] || continue
+      if swarm_check_agent_alive "${stale_pane}"; then
+        echo "INFO: killing stale reviewer pane ${stale_pane}" >&2
+        swarm_kill_agent "${stale_pane}" 2>/dev/null || true
+      fi
+    done < <(awk '/pane_id:/ { pane = $2 } /role:.*reviewer/ { if (pane != "") print pane; pane = "" }' "${ledger}")
+  fi
+  swarm_cleanup_orphan_panes
+
+  # ── 2. Look up agent command ──
+  local agent_cmd
+  agent_cmd=$(swarm_get_agent_field "${agent_name}" "command_interactive")
+  if [[ -z "${agent_cmd}" ]]; then
+    echo "ERROR: agent '${agent_name}' not found or has no command_interactive in agents.yaml" >&2
+    return 1
+  fi
+
+  # ── 3. Resolve @/path prompts to string ──
+  local effective_prompt="${review_prompt}"
+  if [[ "${review_prompt}" == @/* ]]; then
+    local prompt_path="${review_prompt#@}"
+    if [[ ! -f "${prompt_path}" ]]; then
+      echo "ERROR: prompt file not found: ${prompt_path}" >&2
+      return 1
+    fi
+    effective_prompt=$(cat "${prompt_path}")
+  fi
+
+  # ── 4. Clear stale result (Gap 1) ──
+  swarm_clear_result "${result_file}"
+
+  # ── 5. Spawn pane ──
+  local workdir
+  workdir=$(pwd)
+  local pane_id
+  pane_id=$(swarm_spawn_agent "${agent_name}-reviewer" "${agent_cmd}" "${workdir}" "${session_dir}" "${split_dir}" "${split_from}")
+  if [[ -z "${pane_id}" ]]; then
+    echo "ERROR: failed to spawn ${agent_name} reviewer pane" >&2
+    return 1
+  fi
+
+  # ── 6. Register in ledger ──
+  swarm_register_agent "${session_dir}" "${agent_name}-reviewer" "${pane_id}" "reviewer"
+
+  # ── 7. Wait for agent ready (45s, warn-and-proceed) ──
+  if ! swarm_wait_agent_ready "${pane_id}" 45; then
+    echo "WARNING: ${agent_name} reviewer not ready after 45s, sending prompt anyway" >&2
+  fi
+
+  # ── 8. Pipe prompt ──
+  swarm_pipe_prompt "${pane_id}" "${effective_prompt}"
+
+  # ── 9. Poll for result ──
+  # interval=1 for snappy real-time detection (reviewer turn-around matters)
+  # pane_id enables crashed-but-wrote tiebreaker
+  # mode=review enables mtime-stability fallback for non-Status reviewer outputs
+  local rc=0
+  if ! swarm_poll_result "${result_file}" "${timeout}" 1 "${pane_id}" "review"; then
+    echo "ERROR: ${agent_name} reviewer timed out after ${timeout}s (result: ${result_file})" >&2
+    rc=1
+  fi
+
+  # ── 10. Cleanup pane (always — success or timeout) ──
+  swarm_kill_agent "${pane_id}" 2>/dev/null || true
+
+  return "${rc}"
 }

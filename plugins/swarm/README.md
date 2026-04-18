@@ -225,7 +225,7 @@ All agent communication via `.swarm/<session>/`:
                     ▼                     ▼              ▼
               ┌──────────┐         ┌──────────┐   ┌──────────┐
               │  ACCEPT  │         │  REVISE  │   │ ESCALATE │
-              │  ✓ Done  │         │ max 2x   │   │  → User  │
+              │  ✓ Done  │         │ max 3x   │   │  → User  │
               └──────────┘         │ converge │   └──────────┘
                                    │ tracking │
                                    └──────────┘
